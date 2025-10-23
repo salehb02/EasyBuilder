@@ -14,6 +14,8 @@ using Debug = UnityEngine.Debug;
 
 public class EasyBuilder : EditorWindow
 {
+    private const string VERSION = "1.0";
+
     private List<BaseBuildProfileSO> _currentProfiles = new();
     private List<ObjectField> _profilesArray = new();
 
@@ -31,7 +33,7 @@ public class EasyBuilder : EditorWindow
     public static void OpenBuilder()
     {
         var window = GetWindow<EasyBuilder>();
-        window.titleContent = new UnityEngine.GUIContent("Easy Builder");
+        window.titleContent = new UnityEngine.GUIContent($"Easy Builder (v{VERSION})");
     }
 
     public void CreateGUI()
