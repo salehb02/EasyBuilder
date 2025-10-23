@@ -6,5 +6,7 @@ public class SampleBuildProfileSO : BaseBuildProfileSO
     public override void ApplyProfile()
     {
         base.ApplyProfile();
+
+        // Your logic goes here...
     }
 }
