@@ -17,6 +17,6 @@ public class BaseBuildProfileSO : ScriptableObject, IBuildProfile
 
         EditorUserBuildSettings.buildAppBundle = aabBuild;
 
-        PlayerSettings.Android.buildApkPerCpuArchitecture = splitArchitectures;
+        PlayerSettings.Android.buildApkPerCpuArchitecture = splitArchitectures && !aabBuild;
     }
 }

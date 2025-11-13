@@ -296,10 +296,16 @@ public class EasyBuilder : EditorWindow
             var buildNum = PlayerSettings.Android.bundleVersionCode;
             var ext = EditorUserBuildSettings.buildAppBundle ? "aab" : "apk";
 
-            var path = Path.Join(baseBuildPath, $"{productName}_v{version}_{buildNum}_{profile.name}.{ext}");
+			var finalName = $"{packageName}_v{version}_{buildNum}_{profile.name}";
 
-            if (!Directory.Exists(path))
-                Directory.CreateDirectory(path);
+			if (!PlayerSettings.Android.buildApkPerCpuArchitecture)
+                finalName += $".{ext}";
+
+            var path = Path.Join(baseBuildPath, finalName);
+
+            if (PlayerSettings.Android.buildApkPerCpuArchitecture)
+                if (!Directory.Exists(path))
+                    Directory.CreateDirectory(path);
 
             options.locationPathName = path;
 
