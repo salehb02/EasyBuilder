@@ -263,6 +263,12 @@ public class EasyBuilder : EditorWindow
 
         var baseBuildPath = EditorUtility.OpenFolderPanel("Choose build path", "", "");
 
+		if (string.IsNullOrEmpty(baseBuildPath))
+		{
+			Debug.Log("Path did not selected! Build canceled...");
+			return;
+		}
+
         foreach (var profile in _currentProfiles)
         {
             profile.ApplyProfile();
