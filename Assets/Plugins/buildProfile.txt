@@ -1,2 +1,1 @@
 Assets/EasyBuilder/Profiles/Sample Build Profile SO.asset
-Assets/EasyBuilder/Profiles/Sample Build Profile SO.asset

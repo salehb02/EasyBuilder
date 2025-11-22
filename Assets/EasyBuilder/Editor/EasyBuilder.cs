@@ -14,18 +14,16 @@ using Debug = UnityEngine.Debug;
 
 public class EasyBuilder : EditorWindow
 {
-    private const string VERSION = "1.0";
+    private const string VERSION = "1.1";
 
     private List<BaseBuildProfileSO> _currentProfiles = new();
     private List<ObjectField> _profilesArray = new();
 
-    // Keystore
-    private string _keystoreName;
-    private string _keystorePass;
-    private string _keyaliasName;
-    private string _keyaliasPass;
     private string _profileSaveFolderPath = Path.Combine(Application.dataPath, "Plugins");
     private string _profileSaveFilePath = Path.Combine(Application.dataPath, "Plugins", "buildProfile.txt");
+
+    // Keystore
+    private KeystoreProfileSO _keystoreProfile;
 
     public int callbackOrder => 10;
 
@@ -91,41 +89,17 @@ public class EasyBuilder : EditorWindow
         var keyaliasBox = new Foldout();
         keyaliasBox.text = "Keystore";
 
-        var keystoreName = new TextField("Keystore Name");
-        _keystoreName = PlayerSettings.Android.keystoreName;
-        keystoreName.value = _keystoreName;
-        keystoreName.RegisterValueChangedCallback(newName =>
+        var newObjectField = new ObjectField("Profile");
+        newObjectField.objectType = typeof(KeystoreProfileSO);
+        _keystoreProfile = GetCurrentKeystoreProfile();
+        newObjectField.value = _keystoreProfile;
+        newObjectField.RegisterValueChangedCallback(evt =>
         {
-            _keystoreName = newName.newValue;
+            _keystoreProfile = evt.newValue as KeystoreProfileSO;
+            SaveCurrentProfile();
         });
-        keyaliasBox.Add(keystoreName);
 
-        var keystorePass = new TextField("Keystore Pass");
-        _keystorePass = PlayerSettings.Android.keystorePass;
-        keystorePass.value = _keystorePass;
-        keystorePass.RegisterValueChangedCallback(newPass =>
-        {
-            _keystorePass = newPass.newValue;
-        });
-        keyaliasBox.Add(keystorePass);
-
-        var keyaliasName = new TextField("Alias Name");
-        _keyaliasName = PlayerSettings.Android.keyaliasName;
-        keyaliasName.value = _keyaliasName;
-        keyaliasName.RegisterValueChangedCallback(newVal =>
-        {
-            _keyaliasName = newVal.newValue;
-        });
-        keyaliasBox.Add(keyaliasName);
-
-        var keyaliasPass = new TextField("Alias Pass");
-        _keyaliasPass = PlayerSettings.Android.keyaliasPass;
-        keyaliasPass.value = _keyaliasPass;
-        keyaliasPass.RegisterValueChangedCallback(newVal =>
-        {
-            _keyaliasPass = newVal.newValue;
-        });
-        keyaliasBox.Add(keyaliasPass);
+        keyaliasBox.Add(newObjectField);
         root.Add(keyaliasBox);
 
         var buildBtn = new Button(Build);
@@ -195,9 +169,32 @@ public class EasyBuilder : EditorWindow
         var lines = File.ReadAllLines(_profileSaveFilePath);
 
         foreach (var line in lines)
-            finalList.Add(AssetDatabase.LoadAssetAtPath<BaseBuildProfileSO>(line));
+        {
+            if (!line.StartsWith("keystore:"))
+                finalList.Add(AssetDatabase.LoadAssetAtPath<BaseBuildProfileSO>(line));
+        }
 
         return finalList;
+    }
+
+    private KeystoreProfileSO GetCurrentKeystoreProfile()
+    {
+        if (!File.Exists(_profileSaveFilePath))
+            return null;
+
+        var lines = File.ReadAllLines(_profileSaveFilePath);
+
+        var targetLine = lines.FirstOrDefault(x => x.StartsWith("keystore:"));
+
+        if (targetLine != null)
+        {
+            var assetPath = targetLine.Split(':')[1];
+
+            if (!string.IsNullOrEmpty(assetPath))
+                return AssetDatabase.LoadAssetAtPath<KeystoreProfileSO>(assetPath);
+        }
+
+        return null;
     }
 
     private void SaveCurrentProfile()
@@ -222,6 +219,9 @@ public class EasyBuilder : EditorWindow
             if (item != null)
                 allPaths.Add(AssetDatabase.GetAssetPath(item));
 
+        if (_keystoreProfile != null)
+            allPaths.Add("keystore:" + AssetDatabase.GetAssetPath(_keystoreProfile));
+
         File.WriteAllLines(_profileSaveFilePath, allPaths);
         AssetDatabase.Refresh();
     }
@@ -229,7 +229,6 @@ public class EasyBuilder : EditorWindow
     private static bool BuildAddressables()
     {
 #if ADDRESSABLE_ACTIVE
-
         AddressableAssetSettings.BuildPlayerContent(out AddressablesPlayerBuildResult result);
         var success = string.IsNullOrEmpty(result.Error);
 
@@ -250,10 +249,14 @@ public class EasyBuilder : EditorWindow
             return;
         }
 
-        PlayerSettings.Android.keystoreName = _keystoreName;
-        PlayerSettings.Android.keystorePass = _keystorePass;
-        PlayerSettings.Android.keyaliasName = _keyaliasName;
-        PlayerSettings.Android.keyaliasPass = _keyaliasPass;
+        if (_keystoreProfile != null)
+        {
+            _keystoreProfile.Apply();
+        }
+        else
+        {
+            KeystoreProfileSO.ClearKeystore();
+        }
 
         if (_currentProfiles == null || _currentProfiles.Count == 0)
         {
@@ -263,11 +266,11 @@ public class EasyBuilder : EditorWindow
 
         var baseBuildPath = EditorUtility.OpenFolderPanel("Choose build path", "", "");
 
-		if (string.IsNullOrEmpty(baseBuildPath))
-		{
-			Debug.Log("Path did not selected! Build canceled...");
-			return;
-		}
+        if (string.IsNullOrEmpty(baseBuildPath))
+        {
+            Debug.Log("Path did not selected! Build canceled...");
+            return;
+        }
 
         foreach (var profile in _currentProfiles)
         {
@@ -276,56 +279,57 @@ public class EasyBuilder : EditorWindow
 
             var contentBuildSucceeded = BuildAddressables();
 
-            if (!contentBuildSucceeded)
-                continue;
-
-            var options = new BuildPlayerOptions();
-            options.target = EditorUserBuildSettings.activeBuildTarget;
-            options.scenes = GetBuildScenes();
-
-            var developmentBuild = EditorUserBuildSettings.development;
-            if (developmentBuild)
-                options.options |= BuildOptions.Development;
-            if (EditorUserBuildSettings.allowDebugging && developmentBuild)
-                options.options |= BuildOptions.AllowDebugging;
-            if (EditorUserBuildSettings.symlinkSources)
-                options.options |= BuildOptions.SymlinkSources;
-            if (EditorUserBuildSettings.connectProfiler && (developmentBuild || options.target == BuildTarget.WSAPlayer))
-                options.options |= BuildOptions.ConnectWithProfiler;
-            if (EditorUserBuildSettings.buildWithDeepProfilingSupport && developmentBuild)
-                options.options |= BuildOptions.EnableDeepProfilingSupport;
-            if (EditorUserBuildSettings.buildScriptsOnly)
-                options.options |= BuildOptions.BuildScriptsOnly;
-
-            var productName = PlayerSettings.productName;
-            var version = PlayerSettings.bundleVersion;
-            var buildNum = PlayerSettings.Android.bundleVersionCode;
-            var ext = EditorUserBuildSettings.buildAppBundle ? "aab" : "apk";
-
-			var finalName = $"{packageName}_v{version}_{buildNum}_{profile.name}";
-
-			if (!PlayerSettings.Android.buildApkPerCpuArchitecture)
-                finalName += $".{ext}";
-
-            var path = Path.Join(baseBuildPath, finalName);
-
-            if (PlayerSettings.Android.buildApkPerCpuArchitecture)
-                if (!Directory.Exists(path))
-                    Directory.CreateDirectory(path);
-
-            options.locationPathName = path;
-
-            var report = BuildPipeline.BuildPlayer(options);
-            var summary = report.summary;
-
-            if (summary.result == BuildResult.Succeeded)
+            if (contentBuildSucceeded)
             {
-                Debug.Log("Build succeeded!");
-            }
+                var options = new BuildPlayerOptions();
+                options.target = EditorUserBuildSettings.activeBuildTarget;
+                options.scenes = GetBuildScenes();
 
-            if (summary.result == BuildResult.Failed)
-            {
-                Debug.LogError("Build failed");
+                var developmentBuild = EditorUserBuildSettings.development;
+                if (developmentBuild)
+                    options.options |= BuildOptions.Development;
+                if (EditorUserBuildSettings.allowDebugging && developmentBuild)
+                    options.options |= BuildOptions.AllowDebugging;
+                if (EditorUserBuildSettings.symlinkSources)
+                    options.options |= BuildOptions.SymlinkSources;
+                if (EditorUserBuildSettings.connectProfiler && (developmentBuild || options.target == BuildTarget.WSAPlayer))
+                    options.options |= BuildOptions.ConnectWithProfiler;
+                if (EditorUserBuildSettings.buildWithDeepProfilingSupport && developmentBuild)
+                    options.options |= BuildOptions.EnableDeepProfilingSupport;
+                if (EditorUserBuildSettings.buildScriptsOnly)
+                    options.options |= BuildOptions.BuildScriptsOnly;
+
+                var productName = PlayerSettings.productName;
+                var packageName = PlayerSettings.applicationIdentifier;
+                var version = PlayerSettings.bundleVersion;
+                var buildNum = PlayerSettings.Android.bundleVersionCode;
+                var ext = EditorUserBuildSettings.buildAppBundle ? "aab" : "apk";
+
+                var finalName = $"{packageName}_v{version}_{buildNum}_{profile.name}";
+
+                if (!PlayerSettings.Android.buildApkPerCpuArchitecture)
+                    finalName += $".{ext}";
+
+                var path = Path.Join(baseBuildPath, finalName);
+
+                if (PlayerSettings.Android.buildApkPerCpuArchitecture)
+                    if (!Directory.Exists(path))
+                        Directory.CreateDirectory(path);
+
+                options.locationPathName = path;
+
+                var report = BuildPipeline.BuildPlayer(options);
+                var summary = report.summary;
+
+                if (summary.result == BuildResult.Succeeded)
+                {
+                    Debug.Log("Build succeeded!");
+                }
+
+                if (summary.result == BuildResult.Failed)
+                {
+                    Debug.LogError($"Build failed!");
+                }
             }
         }
     }
