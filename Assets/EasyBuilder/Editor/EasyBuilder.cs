@@ -14,7 +14,7 @@ using Debug = UnityEngine.Debug;
 
 public class EasyBuilder : EditorWindow
 {
-    private const string VERSION = "1.1";
+    private const string VERSION = "1.2";
 
     private List<BaseBuildProfileSO> _currentProfiles = new();
     private List<ObjectField> _profilesArray = new();
