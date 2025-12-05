@@ -321,6 +321,8 @@ public class EasyBuilder : EditorWindow
                 var report = BuildPipeline.BuildPlayer(options);
                 var summary = report.summary;
 
+                profile.RevertProfile();
+
                 if (summary.result == BuildResult.Succeeded)
                 {
                     Debug.Log("Build succeeded!");
@@ -329,6 +331,7 @@ public class EasyBuilder : EditorWindow
                 if (summary.result == BuildResult.Failed)
                 {
                     Debug.LogError($"Build failed!");
+                    return;
                 }
             }
         }
