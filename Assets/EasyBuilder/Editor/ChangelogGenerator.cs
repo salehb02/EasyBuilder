@@ -34,7 +34,7 @@ namespace EasyBuilder
     }
 
     /// <summary>
-    /// Writes changelog notes from the git commits since the last tag, with Unity's AI Assistant or an AI
+    /// Writes changelog notes from a range of git commits (by default since the last tag), with Unity's AI Assistant or an AI
     /// command-line tool installed on this machine (Claude Code, Codex, Gemini).
     /// </summary>
     internal static class ChangelogGenerator
@@ -70,10 +70,12 @@ namespace EasyBuilder
 
         /// <exception cref="TimeoutException">The AI didn't answer within <paramref name="timeoutSeconds"/>.</exception>
         /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was canceled.</exception>
+        /// <param name="from">The first commit, tag or branch included. Empty: the commits after the newest tag before <paramref name="to"/>.</param>
+        /// <param name="to">The last commit, tag or branch included. Empty: HEAD.</param>
         public static async Task<string> GenerateAsync(ChangelogAI ai, ChangelogDetail detail, int timeoutSeconds,
-            CancellationToken cancellationToken = default)
+            string from = null, string to = null, CancellationToken cancellationToken = default)
         {
-            var commits = GetCommitsSinceLastTag(out var range);
+            var commits = GetCommits(from, to, out var range);
 
             if (string.IsNullOrWhiteSpace(commits))
                 throw new InvalidOperationException($"There are no commits {range} to write a changelog from.");
@@ -160,16 +162,70 @@ namespace EasyBuilder
             return Changelog.Normalize(kept.Count > 0 ? string.Join("\n", kept) : answer);
         }
 
-        /// <summary>Commit messages since the newest tag, or the latest <see cref="MaxCommits"/> when there's no tag.</summary>
-        public static string GetCommitsSinceLastTag(out string range)
+        private const string GitMissing = "Git isn't installed or isn't on the PATH.";
+        private const string NotARepository = "The project isn't in a git repository, so there are no commits to read.";
+        // Long enough that a git that hangs doesn't freeze the editor on every refresh; installing git shows up within it.
+        private const double GitCheckSeconds = 30;
+
+        private static string _gitProblem;
+        private static double _gitCheckedAt = double.NegativeInfinity;
+
+        /// <summary>
+        /// Why commits can't be read (git missing, or the project isn't a repository), or null when they can. Cached for
+        /// <see cref="GitCheckSeconds"/>, since the window asks on every refresh and starting git each time would be slow.
+        /// </summary>
+        public static string GetGitProblem()
+        {
+            var now = UnityEditor.EditorApplication.timeSinceStartup;
+
+            if (now - _gitCheckedAt < GitCheckSeconds)
+                return _gitProblem;
+
+            try
+            {
+                _gitProblem = RunGit("rev-parse --is-inside-work-tree", out _) == 0 ? null : NotARepository;
+            }
+            catch (InvalidOperationException e)
+            {
+                _gitProblem = e.Message; // Missing, or it didn't answer in time.
+            }
+
+            _gitCheckedAt = now;
+            return _gitProblem;
+        }
+
+        // No whitespace or quotes (they'd break the git arguments), and no leading '-' (it'd be read as an option).
+        private static readonly Regex RevisionPattern = new(@"^[^\s""'\\-][^\s""'\\]*$");
+
+        /// <summary>
+        /// Commit messages from <paramref name="from"/> to <paramref name="to"/>, both included. Empty
+        /// <paramref name="to"/> means HEAD. Empty <paramref name="from"/> means the commits after the newest tag before
+        /// <paramref name="to"/> (the tagged commit belongs to the previous release, so it's left out; a tag on
+        /// <paramref name="to"/> itself doesn't count, so a just-tagged release gets its own notes), or the latest
+        /// <see cref="MaxCommits"/> when there's no tag.
+        /// </summary>
+        public static string GetCommits(string from, string to, out string range)
         {
             if (RunGit("rev-parse --is-inside-work-tree", out _) != 0)
-                throw new InvalidOperationException("The project isn't in a git repository, so there are no commits to read.");
+                throw new InvalidOperationException(NotARepository);
 
-            var tag = RunGit("describe --tags --abbrev=0", out var tagOutput) == 0 ? tagOutput.Trim() : null;
-            range = tag != null ? $"since {tag}" : $"(the last {MaxCommits}, no tag found)";
+            from = from?.Trim();
+            to = to?.Trim();
 
-            var revision = tag != null ? $"\"{tag}..HEAD\"" : "HEAD";
+            var end = string.IsNullOrEmpty(to) ? "HEAD" : VerifyRevision(to, "To");
+            var fromIncluded = !string.IsNullOrEmpty(from);
+            var start = fromIncluded
+                ? VerifyRevision(from, "From")
+                : RunGit($"describe --tags --abbrev=0 \"{end}^\"", out var tagOutput) == 0 ? tagOutput.Trim() : null;
+
+            range = start == null ? $"up to {end} (the last {MaxCommits}, no tag found)"
+                : fromIncluded ? $"from {start} to {end}, both included"
+                : $"after {start} up to {end}";
+
+            // "^start^@" leaves out start's parents but keeps start itself, and works for the first commit too.
+            var revision = start == null ? $"\"{end}\""
+                : fromIncluded ? $"\"{end}\" \"^{start}^@\""
+                : $"\"{start}..{end}\"";
 
             // %x1e separates commits, since bodies can contain blank lines.
             if (RunGit($"log {revision} --no-merges -n {MaxCommits} --pretty=format:%s%n%b%x1e", out var log) != 0)
@@ -181,7 +237,52 @@ namespace EasyBuilder
                 .Select(commit => "- " + commit.Replace("\n", "\n  "));
 
             var text = string.Join("\n", commits);
+
+            // Strictly older: both checks pass when they are the same commit.
+            if (text.Length == 0 && start != null && RunGit($"merge-base --is-ancestor \"{end}\" \"{start}\"", out _) == 0 &&
+                RunGit($"merge-base --is-ancestor \"{start}\" \"{end}\"", out _) != 0)
+                throw new InvalidOperationException($"'{start}' comes after '{end}'. Swap From and To.");
+
             return text.Length > MaxCommitText ? text.Substring(0, MaxCommitText) + "\n(older commits left out)" : text;
+        }
+
+        private static string VerifyRevision(string revision, string field)
+        {
+            if (!RevisionPattern.IsMatch(revision))
+                throw new InvalidOperationException($"{field}: '{revision}' isn't a valid commit, tag or branch name.");
+
+            if (RunGit($"rev-parse --verify --quiet \"{revision}^{{commit}}\"", out _) != 0)
+                throw new InvalidOperationException($"{field}: there's no commit, tag or branch '{revision}' in this repository.");
+
+            return revision;
+        }
+
+        /// <summary>The newest tags and commits, to pick a range from. Empty lists when git can't be read.</summary>
+        public static (List<string> tags, List<(string hash, string subject)> commits) GetRecentRevisions(int count = 25)
+        {
+            var tags = new List<string>();
+            var commits = new List<(string, string)>();
+
+            try
+            {
+                if (RunGit($"for-each-ref --sort=-creatordate --count={count} --format=%(refname:short) refs/tags", out var tagOutput) == 0)
+                    tags.AddRange(tagOutput.Split('\n').Select(tag => tag.Trim()).Where(tag => tag.Length > 0));
+
+                if (RunGit($"log -n {count} --pretty=format:%h%x09%s", out var logOutput) == 0)
+                    foreach (var line in logOutput.Split('\n'))
+                    {
+                        var tab = line.IndexOf('\t');
+
+                        if (tab > 0)
+                            commits.Add((line.Substring(0, tab).Trim(), line.Substring(tab + 1).Trim()));
+                    }
+            }
+            catch (InvalidOperationException)
+            {
+                // Not a repository, or git is missing; the caller shows an empty menu.
+            }
+
+            return (tags, commits);
         }
 
         private static int RunGit(string arguments, out string output)
@@ -214,7 +315,7 @@ namespace EasyBuilder
             }
             catch (Win32Exception)
             {
-                throw new InvalidOperationException("Git isn't installed or isn't on the PATH.");
+                throw new InvalidOperationException(GitMissing);
             }
         }
     }

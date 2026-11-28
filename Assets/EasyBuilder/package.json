@@ -1,6 +1,6 @@
 {
   "name": "com.salehb02.easybuilder",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "displayName": "Easy Builder",
   "description": "Build several profiles in one click: each profile applies its package name, title, icons, scenes and defines, builds, and restores the project settings afterwards. Includes keystore management and a command-line entry point for CI.",
   "unity": "2022.3",

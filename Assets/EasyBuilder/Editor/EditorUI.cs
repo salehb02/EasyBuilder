@@ -140,6 +140,94 @@ namespace EasyBuilder
     }
 
     /// <summary>
+    /// A section like <see cref="EditorUI.CreateSection"/> whose title collapses it. While collapsed, a one-line summary
+    /// sits next to the title, so set-once sections stay out of the way but still say what they're set to. Whether it's
+    /// open is remembered per machine.
+    /// </summary>
+    internal sealed class CollapsibleSection : VisualElement
+    {
+        private readonly string _prefsKey;
+        private readonly Label _arrow;
+        private readonly Label _summary;
+
+        /// <summary>Where the section's fields go.</summary>
+        public VisualElement Content { get; }
+
+        public bool IsOpen { get; private set; }
+
+        public CollapsibleSection(string title, string prefsKey, bool openByDefault = true)
+        {
+            _prefsKey = prefsKey;
+
+            style.marginTop = 8;
+            style.paddingTop = style.paddingBottom = 6;
+            style.paddingLeft = style.paddingRight = 6;
+            EditorUI.SetBorder(this, 1, EditorUI.BorderColor, 4);
+            style.backgroundColor = EditorGUIUtility.isProSkin ? new Color(1, 1, 1, 0.03f) : new Color(1, 1, 1, 0.35f);
+
+            var header = new VisualElement { tooltip = "Click to show or hide." };
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.paddingLeft = 3;
+            header.RegisterCallback<ClickEvent>(_ => SetOpen(!IsOpen));
+            Add(header);
+
+            _arrow = new Label { pickingMode = PickingMode.Ignore };
+            _arrow.style.width = 12;
+            _arrow.style.fontSize = 10;
+            _arrow.style.opacity = 0.7f;
+            header.Add(_arrow);
+
+            var titleLabel = new Label(title) { pickingMode = PickingMode.Ignore };
+            titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            titleLabel.style.fontSize = 13;
+            titleLabel.style.flexShrink = 0;
+            header.Add(titleLabel);
+
+            _summary = new Label { pickingMode = PickingMode.Ignore };
+            _summary.style.flexGrow = 1;
+            _summary.style.flexShrink = 1;
+            _summary.style.marginLeft = 8;
+            _summary.style.opacity = 0.7f;
+            _summary.style.unityTextAlign = TextAnchor.MiddleRight;
+            _summary.style.whiteSpace = WhiteSpace.NoWrap;
+            _summary.style.overflow = Overflow.Hidden;
+            _summary.style.textOverflow = TextOverflow.Ellipsis;
+            header.Add(_summary);
+
+            Content = new VisualElement();
+            Content.style.marginTop = 4;
+            Add(Content);
+
+            SetOpen(EditorPrefs.GetBool(_prefsKey, openByDefault), remember: false);
+        }
+
+        /// <summary>Shown next to the title while the section is collapsed, e.g. the folder builds go to.</summary>
+        public string Summary
+        {
+            get => _summary.text;
+            set
+            {
+                _summary.text = value;
+                _summary.tooltip = value;
+            }
+        }
+
+        public void SetOpen(bool open) => SetOpen(open, remember: true);
+
+        private void SetOpen(bool open, bool remember)
+        {
+            IsOpen = open;
+            _arrow.text = open ? "▼" : "▶";
+            EditorUI.SetVisible(Content, open);
+            EditorUI.SetVisible(_summary, !open);
+
+            if (remember)
+                EditorPrefs.SetBool(_prefsKey, open);
+        }
+    }
+
+    /// <summary>
     /// A green "ready" or orange "N problems" panel. Long problem lists scroll inside the panel, so it never
     /// pushes the rest of the UI around.
     /// </summary>

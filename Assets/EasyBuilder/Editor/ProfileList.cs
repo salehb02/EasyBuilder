@@ -33,7 +33,7 @@ namespace EasyBuilder
             _rows = new VisualElement();
             Add(_rows);
 
-            _emptyState = new Label("No profiles yet.\nClick New Profile…, or drag profile assets from the Project window here.");
+            _emptyState = new Label("No profiles yet.\nClick Add Profile ▾, or drag profile assets from the Project window here.");
             _emptyState.style.whiteSpace = WhiteSpace.Normal;
             _emptyState.style.unityTextAlign = TextAnchor.MiddleCenter;
             _emptyState.style.opacity = 0.7f;
