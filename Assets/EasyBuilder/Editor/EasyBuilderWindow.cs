@@ -14,7 +14,7 @@ namespace EasyBuilder
 {
     public class EasyBuilderWindow : EditorWindow
     {
-        private const string Version = "2.2";
+        private const string Version = "2.2.1";
         private const int MaxDialogLength = 1500;
         private const long ValidationIntervalMs = 2000;
 
