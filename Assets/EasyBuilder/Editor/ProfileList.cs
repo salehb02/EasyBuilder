@@ -91,7 +91,7 @@ namespace EasyBuilder
                 if (profile == null)
                     continue;
 
-                state.Append(profile.GetInstanceID()).Append('|')
+                state.Append(AssetDatabase.GetAssetPath(profile)).Append('|')
                     .Append(profile.name).Append('|')
                     .Append(Settings.IsProfileEnabled(profile)).Append('|')
                     .Append(profile.Describe(target)).Append('|')
