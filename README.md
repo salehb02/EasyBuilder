@@ -40,7 +40,7 @@ Or add it to `Packages/manifest.json` yourself:
 }
 ```
 
-To pin a specific version, add a release tag to the end of the URL, for example `…?path=/Assets/EasyBuilder#v2.1`. Without a tag you get the latest commit on the default branch; to update, click **Update** in the Package Manager, or remove and re-add the package.
+To pin a specific version, add a release tag to the end of the URL, for example `…?path=/Assets/EasyBuilder#v2.2`. Without a tag you get the latest commit on the default branch; to update, click **Update** in the Package Manager, or remove and re-add the package.
 
 Files installed through the Package Manager are read-only, including the sample profiles. Create your own profiles with **Create → Easy Builder → New Base Profile** and keystores with **Create → Easy Builder → New Keystore Profile**, or use **Add Profile ▾ → New Profile…**, **New…** next to the keystore field and **New Version** in the window. New versions are saved in `Assets/Versions` (or next to your existing ones).
 
