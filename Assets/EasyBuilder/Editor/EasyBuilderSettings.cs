@@ -22,6 +22,8 @@ namespace EasyBuilder
         public const string ChangelogHistoryFileProperty = nameof(changelogHistoryFile);
         public const string ChangelogDetailProperty = nameof(changelogDetail);
         public const string ChangelogAITimeoutProperty = nameof(changelogAITimeout);
+        public const string ChangelogFromProperty = nameof(changelogFrom);
+        public const string ChangelogToProperty = nameof(changelogTo);
 
         [SerializeField] private List<BaseBuildProfileSO> profiles = new();
         [SerializeField] private List<BaseBuildProfileSO> disabledProfiles = new();
@@ -34,6 +36,8 @@ namespace EasyBuilder
         [SerializeField] private ChangelogDetail changelogDetail = ChangelogDetail.Normal;
         [SerializeField] private string changelogAI;
         [SerializeField] private int changelogAITimeout = ChangelogGenerator.DefaultTimeoutSeconds;
+        [SerializeField] private string changelogFrom;
+        [SerializeField] private string changelogTo;
         [SerializeField] private bool legacySelectionImported;
 
         public KeystoreProfileSO Keystore => keystore;
@@ -108,6 +112,12 @@ namespace EasyBuilder
         }
 
         public int ChangelogAITimeout => changelogAITimeout;
+
+        /// <summary>The commit, tag or branch the generated changelog starts after. Empty: the last tag.</summary>
+        public string ChangelogFrom => changelogFrom;
+
+        /// <summary>The last commit, tag or branch the generated changelog includes. Empty: HEAD.</summary>
+        public string ChangelogTo => changelogTo;
 
         public void SaveSettings() => Save(true);
 

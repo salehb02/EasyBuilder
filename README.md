@@ -162,7 +162,7 @@ After the batch, Easy Builder writes only your notes, grouped and sorted, to `Ch
 - The notes, detail level, history file, AI choice and timeout are saved per user in `UserSettings/EasyBuilderSettings.asset`, like the profile selection.
 
 ### **Auto Generate**
-Pick an AI in the **AI** list under Detail Level and click **Auto Generate**. The list always shows every supported AI; one that isn't installed is marked *(not installed)*, with a note on how to install it, and can't be used until it is.
+Pick an AI in the **AI** list at the top of the Changelog section and click **Generate**. The list always shows every supported AI; one that isn't installed is marked *(not installed)*, with a note on how to install it, and can't be used until it is.
 
 | AI | Installed when |
 |---|---|
@@ -173,14 +173,21 @@ Pick an AI in the **AI** list under Detail Level and click **Auto Generate**. Th
 
 Command-line tools use your own login or API key, so sign in to them once in a terminal first. They run in the temp folder with their tools turned off, so they can't read or change your project.
 
-Auto Generate reads the git commits since the last tag (or the last 200 when there is no tag) and asks the selected AI to write the notes at the selected detail level. You can replace your notes or add the generated ones below them. Review the notes before building.
+**Generate** reads the git commits in the **Commits** range (`From → To`) and asks the selected AI to write the notes at the selected detail level. You can replace your notes or add the generated ones below them. Review the notes before building.
 
-While it runs, the button turns into **Cancel**. **AI Timeout (s)** (120 by default) stops waiting after that many seconds and stops the tool.
+Both fields take a commit hash, tag or branch, typed in or chosen with **▾** from the recent tags and commits. Both ends are included: From `a1b2c3d` and To `e4f5a6b` reads those two commits and everything between them.
+
+- **From** empty: starts after the newest tag before To, leaving out the tagged commit since it belongs to the previous release (or takes the last 200 commits when there is no tag).
+- **To** empty: ends at the current commit (HEAD).
+
+For the notes of one release, leave From empty and set To to its tag (e.g. `v2.1`). Setting From to `v2.0` would also include the commit tagged `v2.0`.
+
+While it runs, the button turns into **Cancel** and counts the seconds. **AI Timeout (s)** under **Options** (120 by default) stops waiting after that many seconds and stops the tool.
 
 Auto Generate is only available in the window. On CI, pass notes with `-ebChangelogFile` instead.
 
 ### **History file**
-Set **History File** (for example `CHANGELOG.md`, relative to the project folder) to also keep a running changelog. When every profile builds, an entry is added at the top:
+Set **History File** under **Options** (for example `CHANGELOG.md`, relative to the project folder) to also keep a running changelog. When every profile builds, an entry is added at the top:
 
 ```markdown
 # Changelog

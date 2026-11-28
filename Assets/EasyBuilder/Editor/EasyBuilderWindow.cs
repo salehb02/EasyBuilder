@@ -36,7 +36,6 @@ namespace EasyBuilder
         private Button _addSlotButton;
         private Button _openOutputButton;
         private Button _generateChangelogButton;
-        private VisualElement _changelogAISection;
         private VisualElement _changelogAIFieldHolder;
         private PopupField<ChangelogAI> _changelogAIField;
         private string _changelogAIIds;
@@ -44,7 +43,7 @@ namespace EasyBuilder
         private System.Threading.CancellationTokenSource _generateCancellation;
         private bool _buildQueued;
 
-        private const string GenerateChangelogText = "Auto Generate";
+        private const string GenerateChangelogText = "Generate";
 
         [MenuItem("Tools/Easy Builder")]
         public static void OpenBuilder()
@@ -312,11 +311,33 @@ namespace EasyBuilder
         private VisualElement CreateChangelogSection()
         {
             var section = CreateSection("Changelog",
-                "One change per line, e.g. \"feat: New shop\" or \"fix(ui): Button overlap\". Grouped as Features, Fixes, … " +
-                "into Changelog_v<version>_<build>.md next to the builds. Leave empty to skip.");
+                "Written next to the builds as Changelog_v<version>_<build>.md. Leave the notes empty to skip.");
 
+            // 1. Generate: the AI (see RefreshChangelogAI) and the button, then the commit range.
+            var aiRow = new VisualElement();
+            aiRow.style.flexDirection = FlexDirection.Row;
+            _changelogAIFieldHolder = new VisualElement();
+            _changelogAIFieldHolder.style.flexGrow = 1;
+            _changelogAIFieldHolder.style.flexShrink = 1;
+            aiRow.Add(_changelogAIFieldHolder);
+
+            _generateChangelogButton = new Button(OnGenerateChangelogClicked) { text = GenerateChangelogText };
+            _generateChangelogButton.style.unityFontStyleAndWeight = FontStyle.Bold;
+            _generateChangelogButton.style.minWidth = 90;
+            aiRow.Add(_generateChangelogButton);
+            section.Add(aiRow);
+
+            _changelogAIMissing = new HelpBox(string.Empty, HelpBoxMessageType.Info);
+            section.Add(_changelogAIMissing);
+
+            section.Add(CreateCommitRangeRow());
+
+            // 2. The notes, which the AI fills in and you can edit.
             var notesField = new TextField { multiline = true, isDelayed = true, bindingPath = EasyBuilderSettings.ChangelogProperty };
-            notesField.style.minHeight = 70;
+            notesField.textEdition.placeholder = "feat: New shop\nfix(ui): Button overlap\n\nOne change per line, or Generate them.";
+            notesField.textEdition.hidePlaceholderOnFocus = true;
+            notesField.style.minHeight = 80;
+            notesField.style.marginTop = 4;
             notesField.style.whiteSpace = WhiteSpace.Normal;
             section.Add(notesField);
 
@@ -326,22 +347,9 @@ namespace EasyBuilder
                           "Detailed: everything, including docs, maintenance and indented detail lines. Breaking changes are always listed.",
             });
 
-            // Lists every AI Easy Builder supports; see RefreshChangelogAI.
-            _changelogAISection = new VisualElement();
-
-            var aiRow = new VisualElement();
-            aiRow.style.flexDirection = FlexDirection.Row;
-            _changelogAIFieldHolder = new VisualElement();
-            _changelogAIFieldHolder.style.flexGrow = 1;
-            _changelogAIFieldHolder.style.flexShrink = 1;
-            aiRow.Add(_changelogAIFieldHolder);
-
-            _generateChangelogButton = new Button(OnGenerateChangelogClicked) { text = GenerateChangelogText };
-            aiRow.Add(_generateChangelogButton);
-            _changelogAISection.Add(aiRow);
-
-            _changelogAIMissing = new HelpBox(string.Empty, HelpBoxMessageType.Info);
-            _changelogAISection.Add(_changelogAIMissing);
+            // 3. Set-once settings, out of the way.
+            var options = new Foldout { text = "Options", value = false, viewDataKey = "EasyBuilderChangelogOptions" };
+            section.Add(options);
 
             var timeoutField = new IntegerField("AI Timeout (s)")
             {
@@ -356,8 +364,7 @@ namespace EasyBuilder
                 if (clamped != evt.newValue)
                     SetSetting(EasyBuilderSettings.ChangelogAITimeoutProperty, property => property.intValue = clamped);
             });
-            _changelogAISection.Add(timeoutField);
-            section.Add(_changelogAISection);
+            options.Add(timeoutField);
 
             var historyField = new TextField("History File")
             {
@@ -367,9 +374,89 @@ namespace EasyBuilder
                           "this version's notes are added at the top. Rebuilding the same version and build number replaces its entry.",
             };
             historyField.RegisterValueChangedCallback(_ => RefreshValidation());
-            section.Add(WithSideButtons(historyField, ("Browse…", "Choose or create the changelog history file.", BrowseChangelogHistoryFile)));
+            options.Add(WithSideButtons(historyField, ("Browse…", "Choose or create the changelog history file.", BrowseChangelogHistoryFile)));
 
             return section;
+        }
+
+        // "Commits  [last tag][▾] → [HEAD][▾]": both ends included; empty ends show what they default to.
+        private VisualElement CreateCommitRangeRow()
+        {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.alignItems = Align.Center;
+
+            var label = new Label("Commits")
+            {
+                tooltip = "The commits to generate from, both ends included. Type a commit hash, tag or branch, or pick one with ▾.",
+            };
+            label.AddToClassList(BaseField<string>.labelUssClassName);
+            label.style.marginLeft = 3; // A field's own margin, so it lines up with the labels above and below.
+            row.Add(label);
+
+            row.Add(CreateRevisionField(EasyBuilderSettings.ChangelogFromProperty, "after last tag",
+                "First commit, tag or branch (included). Empty: the commits after the newest tag."));
+
+            var arrow = new Label("→");
+            arrow.style.marginLeft = arrow.style.marginRight = 3;
+            row.Add(arrow);
+
+            row.Add(CreateRevisionField(EasyBuilderSettings.ChangelogToProperty, "HEAD",
+                "Last commit, tag or branch (included). Empty: the current commit (HEAD)."));
+
+            return row;
+        }
+
+        // A commit, tag or branch, typed in or picked from the recent tags and commits in one flat menu.
+        private VisualElement CreateRevisionField(string propertyName, string placeholder, string tooltip)
+        {
+            var field = new TextField { isDelayed = true, bindingPath = propertyName, tooltip = tooltip };
+            field.textEdition.placeholder = placeholder;
+            field.textEdition.hidePlaceholderOnFocus = true;
+            field.style.flexGrow = 1;
+            field.style.flexShrink = 1;
+            field.style.minWidth = 60;
+            field.style.marginRight = 0;
+
+            Button pick = null;
+            pick = CreateIconButton("icon dropdown", "▾", "Pick a recent tag or commit.", () =>
+            {
+                var (tags, commits) = ChangelogGenerator.GetRecentRevisions(15);
+                var menu = new GenericMenu();
+
+                void Add(string text, string value) =>
+                    menu.AddItem(new GUIContent(text.Replace('/', '∕')), field.value == value, // '/' would make a submenu.
+                        () => SetSetting(propertyName, property => property.stringValue = value));
+
+                Add($"Default ({placeholder})", string.Empty);
+
+                if (tags.Count > 0)
+                {
+                    menu.AddSeparator(string.Empty);
+                    menu.AddDisabledItem(new GUIContent("Tags"));
+                    tags.ForEach(tag => Add(tag, tag));
+                }
+
+                if (commits.Count > 0)
+                {
+                    menu.AddSeparator(string.Empty);
+                    menu.AddDisabledItem(new GUIContent("Recent commits"));
+
+                    foreach (var (hash, subject) in commits)
+                        Add($"{hash}  {(subject.Length > 50 ? subject.Substring(0, 50) + "…" : subject)}", hash);
+                }
+
+                menu.DropDown(pick.worldBound);
+            });
+
+            var group = new VisualElement();
+            group.style.flexDirection = FlexDirection.Row;
+            group.style.flexGrow = 1;
+            group.style.flexShrink = 1;
+            group.style.flexBasis = 0;
+            group.Add(field);
+            group.Add(pick);
+            return group;
         }
 
         // AI tools can be installed or removed while the editor is open, so this runs whenever the window gets focus.
@@ -415,7 +502,7 @@ namespace EasyBuilder
 
             _generateChangelogButton.SetEnabled(isInstalled);
             _generateChangelogButton.tooltip = isInstalled
-                ? $"Write the notes with {selected.DisplayName} from the git commits since the last tag, at the selected detail level."
+                ? $"Write the notes with {selected.DisplayName} from the git commits in the From–To range (by default, since the last tag), at the selected detail level."
                 : $"{selected.DisplayName} isn't installed. Pick another AI, or install it.";
         }
 
@@ -456,13 +543,18 @@ namespace EasyBuilder
             _generateCancellation = new System.Threading.CancellationTokenSource();
             _generateChangelogButton.text = "Cancel";
             _generateChangelogButton.tooltip = $"Stop waiting for {ai.DisplayName}.";
+
+            // "Cancel (12s)", so it's clear the AI is still working.
+            var started = System.DateTime.UtcNow;
+            var ticker = _generateChangelogButton.schedule.Execute(() =>
+                _generateChangelogButton.text = $"Cancel ({(int)(System.DateTime.UtcNow - started).TotalSeconds}s)").Every(1000);
             _changelogAIField?.SetEnabled(false);
             Debug.Log($"[EasyBuilder] Generating the changelog with {ai.DisplayName}...");
 
             try
             {
                 var generated = await ChangelogGenerator.GenerateAsync(ai, current.ChangelogDetail, settings.ChangelogAITimeout,
-                    _generateCancellation.Token);
+                    settings.ChangelogFrom, settings.ChangelogTo, _generateCancellation.Token);
 
                 // The window may have been closed while the AI was answering.
                 if (_settings == null || _settings.targetObject == null)
@@ -484,6 +576,7 @@ namespace EasyBuilder
             }
             finally
             {
+                ticker.Pause();
                 _generateCancellation.Dispose();
                 _generateCancellation = null;
 
