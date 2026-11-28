@@ -329,6 +329,9 @@ namespace EasyBuilder
                 var report = BuildPipeline.BuildPlayer(options);
                 result.Result = report.summary.result;
 
+                if (result.Result == BuildResult.Succeeded && IsSplitApkFolder(target, result.OutputPath))
+                    RenameSplitApks(result.OutputPath);
+
                 // summary.totalSize is the size of the build's content before packaging, not of the APK, AAB or
                 // project that was written, so measure the output on disk instead.
                 result.TotalSize = GetSizeOnDisk(result.OutputPath) ?? report.summary.totalSize;
@@ -707,6 +710,50 @@ namespace EasyBuilder
             var assets = Path.GetFullPath(Application.dataPath).Replace('\\', '/').TrimEnd('/');
             return full.Equals(assets, StringComparison.OrdinalIgnoreCase) ||
                    full.StartsWith(assets + "/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSplitApkFolder(BuildTarget target, string path)
+        {
+            return target == BuildTarget.Android && !EditorUserBuildSettings.exportAsGoogleAndroidProject &&
+                   !EditorUserBuildSettings.buildAppBundle && PlayerSettings.Android.buildApkPerCpuArchitecture &&
+                   Directory.Exists(path);
+        }
+
+        /// <summary>
+        /// Unity names split APKs after the product ("My Game.arm64-v8a.apk"), the same for every profile and
+        /// version. Renames them after their build folder instead, keeping the CPU architecture:
+        /// "com.company.game_v1.2_7_Production.arm64-v8a.apk".
+        /// </summary>
+        private static void RenameSplitApks(string folder)
+        {
+            var buildName = Path.GetFileName(folder.TrimEnd('/', '\\'));
+
+            foreach (var apk in Directory.GetFiles(folder, "*.apk"))
+            {
+                var withoutExtension = Path.GetFileNameWithoutExtension(apk);
+                var dot = withoutExtension.LastIndexOf('.');
+
+                if (dot < 0)
+                    continue; // Not a "<product>.<architecture>.apk" file.
+
+                var architecture = withoutExtension.Substring(dot + 1);
+                var renamed = Path.Combine(folder, $"{buildName}.{architecture}.apk");
+
+                if (string.Equals(apk, renamed, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try
+                {
+                    if (File.Exists(renamed))
+                        File.Delete(renamed); // Left by an earlier build of the same version.
+
+                    File.Move(apk, renamed);
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    Debug.LogWarning($"[EasyBuilder] Couldn't rename {apk} to {renamed}: {e.Message}");
+                }
+            }
         }
 
         /// <summary>The size of a build file, or of every file in a build folder; null if it doesn't exist.</summary>
