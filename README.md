@@ -42,7 +42,7 @@ Or add it to `Packages/manifest.json` yourself:
 
 To pin a specific version, add a release tag to the end of the URL, for example `…?path=/Assets/EasyBuilder#v2.1`. Without a tag you get the latest commit on the default branch; to update, click **Update** in the Package Manager, or remove and re-add the package.
 
-Files installed through the Package Manager are read-only, including the sample profiles. Create your own profiles with **Create → Easy Builder → New Base Profile** and keystores with **Create → Easy Builder → New Keystore Profile**, or use **New Profile…**, **New Keystore Profile…** and **New Version** in the window. New versions are saved in `Assets/Versions` (or next to your existing ones).
+Files installed through the Package Manager are read-only, including the sample profiles. Create your own profiles with **Create → Easy Builder → New Base Profile** and keystores with **Create → Easy Builder → New Keystore Profile**, or use **Add Profile ▾ → New Profile…**, **New…** next to the keystore field and **New Version** in the window. New versions are saved in `Assets/Versions` (or next to your existing ones).
 
 ### **Optional setup**
 - **Addressables** and **External Dependency Manager (EDM4U)** are detected automatically; see [Addressables and EDM4U](#addressables-and-edm4u).
@@ -268,7 +268,7 @@ Unity exits with code 0 when every profile built and 1 otherwise.
 
 ## **Addressables and EDM4U**
 - **Addressables** (1.19.11 or newer) are detected automatically, so no define symbol is needed. Content is built before each profile, and *Build Addressables on Player Build* is switched off during the batch so it isn't built twice.
-- **External Dependency Manager (EDM4U)** is detected automatically. Android dependencies are force-resolved before each Android build; turn this off in the window if you don't need it.
+- **External Dependency Manager (EDM4U)** is detected automatically. Android dependencies are force-resolved before each Android build; turn off **Resolve Android Dependencies** in the window's Output section if you don't need it.
 
 The `ADDRESSABLE_ACTIVE` and `GOOGLE_PLAY_ACTIVE` define symbols from v1.x are no longer needed.
 

@@ -29,16 +29,16 @@ namespace EasyBuilder
         private VersionProfileFields _versionFields;
         private VisualElement _versionSettings;
         private ChangelogAIField _changelogAIField;
-        private VisualElement _signingSection;
-        private HelpBox _noKeystoreInfo;
+        private CollapsibleSection _signingSection;
+        private CollapsibleSection _outputSection;
+        private Label _noKeystoreInfo;
         private Label _keystoreSummary;
-        private VisualElement _keystoreButtons;
+        private Button _editKeystoreButton;
         private KeystorePasswordFields _passwords;
         private VisualElement _resolveDependenciesField;
         private ProfileList _profileList;
         private StatusPanel _statusPanel;
         private Button _buildButton;
-        private Button _addSlotButton;
         private Button _openOutputButton;
         private bool _buildQueued;
 
@@ -103,16 +103,15 @@ namespace EasyBuilder
             content.Add(CreateHeader());
             content.Add(CreateVersionSection());
             content.Add(CreateProfilesSection());
-            content.Add(_signingSection = CreateSigningSection());
-            var outputSection = CreateOutputSection();
-            content.Add(outputSection);
+            content.Add(CreateSigningSection());
+            content.Add(CreateOutputSection());
 
             root.Add(CreateFooter());
 
             // Bound part by part: the version fields are bound to the selected version asset instead.
             _versionSettings.Bind(_settings);
             _signingSection.Bind(_settings);
-            outputSection.Bind(_settings);
+            _outputSection.Bind(_settings);
             root.TrackSerializedObjectValue(_settings, _ =>
             {
                 EasyBuilderSettings.instance.SaveSettings();
@@ -132,40 +131,30 @@ namespace EasyBuilder
         private VisualElement CreateHeader()
         {
             var header = new VisualElement();
-            header.style.marginTop = 10;
-            header.style.marginBottom = 4;
-
-            var title = new Label("EASY BUILDER");
-            title.style.unityTextAlign = TextAnchor.MiddleCenter;
-            title.style.unityFontStyleAndWeight = FontStyle.Bold;
-            title.style.fontSize = 22;
-            header.Add(title);
-
-            var targetRow = new VisualElement();
-            targetRow.style.flexDirection = FlexDirection.Row;
-            targetRow.style.justifyContent = Justify.Center;
-            targetRow.style.alignItems = Align.Center;
-            targetRow.style.marginTop = 4;
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.marginTop = 6;
+            header.style.paddingLeft = 3;
 
             _targetLabel = new Label();
-            _targetLabel.style.marginRight = 6;
-            targetRow.Add(_targetLabel);
+            _targetLabel.style.flexGrow = 1;
+            _targetLabel.style.flexShrink = 1;
+            _targetLabel.style.fontSize = 13;
+            _targetLabel.style.whiteSpace = WhiteSpace.Normal;
+            header.Add(_targetLabel);
 
-            var switchPlatformButton = new Button(BuildPlayerWindow.ShowBuildPlayerWindow)
+            header.Add(new Button(BuildPlayerWindow.ShowBuildPlayerWindow)
             {
                 text = "Switch Platform…",
                 tooltip = "Open the Build Settings window to change the active platform.",
-            };
-            targetRow.Add(switchPlatformButton);
-            header.Add(targetRow);
+            });
 
             return header;
         }
 
         private VisualElement CreateVersionSection()
         {
-            var section = CreateSection("Version",
-                "One asset per release, with its build number and changelog notes. The selected one is written to Player Settings and built.");
+            var section = CreateSection("Version", "The release to build: one asset per version, with its build number and notes.");
 
             // Pick a version, or make the next one.
             var pickRow = new VisualElement();
@@ -359,8 +348,7 @@ namespace EasyBuilder
 
         private VisualElement CreateProfilesSection()
         {
-            var section = CreateSection("Profiles",
-                "Built in order, top to bottom. Untick a profile to skip it. Drag profile assets here to add them.");
+            var section = CreateSection("Profiles", "Built top to bottom. Untick to skip one. Drag profile assets here to add them.");
 
             _profileList = new ProfileList();
             _profileList.Changed += () =>
@@ -370,39 +358,64 @@ namespace EasyBuilder
             };
             section.Add(_profileList);
 
-            var buttons = CreateButtonRow(
-                ("New Profile…", "Create a profile asset and add it to the list.",
-                    () => CreateAssetInto<BaseBuildProfileSO>("New Build Profile", EasyBuilderSettings.ProfilesProperty, addToList: true)));
-            _addSlotButton = new Button(() => _profileList.AddEmptySlot()) { text = "Add Slot" };
-            buttons.Insert(0, _addSlotButton);
+            Button addButton = null;
+            addButton = new Button(() => ShowAddProfileMenu(addButton))
+            {
+                text = "Add Profile ▾",
+                tooltip = "Add a profile asset from your project, or create a new one.",
+            };
+            var buttons = CreateButtonRow();
+            buttons.Add(addButton);
             section.Add(buttons);
 
             return section;
         }
 
+        // Every profile asset not in the list yet, then New Profile…: no empty slot to fill in afterwards.
+        private void ShowAddProfileMenu(Button button)
+        {
+            var settings = EasyBuilderSettings.instance;
+            var available = AssetDatabase.FindAssets("t:" + nameof(BaseBuildProfileSO))
+                .Select(guid => AssetDatabase.LoadAssetAtPath<BaseBuildProfileSO>(AssetDatabase.GUIDToAssetPath(guid)))
+                .Where(profile => profile != null && !settings.ContainsProfile(profile))
+                .OrderBy(profile => profile.name)
+                .ToList();
+
+            var menu = new GenericMenu();
+
+            foreach (var profile in available)
+            {
+                menu.AddItem(new GUIContent(profile.name.Replace('/', '∕')), false, () =>
+                {
+                    settings.AddProfile(profile);
+                    _settings.Update();
+                    _profileList.Refresh();
+                    RefreshValidation();
+                });
+            }
+
+            if (available.Count == 0)
+                menu.AddDisabledItem(new GUIContent("Every profile asset is already in the list"));
+
+            menu.AddSeparator(string.Empty);
+            menu.AddItem(new GUIContent("New Profile…"), false,
+                () => CreateAssetInto<BaseBuildProfileSO>("New Build Profile", EasyBuilderSettings.ProfilesProperty, addToList: true));
+            menu.DropDown(button.worldBound);
+        }
+
         private VisualElement CreateSigningSection()
         {
-            var section = CreateSection("Signing (Android)", null);
+            _signingSection = new CollapsibleSection("Signing (Android)", "EasyBuilder.Window.SigningOpen");
+            var body = _signingSection.Content;
 
-            section.Add(new PropertyField(_settings.FindProperty(EasyBuilderSettings.KeystoreProperty), "Keystore Profile"));
+            var keystoreRow = new VisualElement();
+            keystoreRow.style.flexDirection = FlexDirection.Row;
+            var keystoreField = new PropertyField(_settings.FindProperty(EasyBuilderSettings.KeystoreProperty), "Keystore Profile");
+            keystoreField.style.flexGrow = 1;
+            keystoreField.style.flexShrink = 1;
+            keystoreRow.Add(keystoreField);
 
-            _noKeystoreInfo = new HelpBox("No keystore profile selected: the keystore set in Player Settings is used unchanged.",
-                HelpBoxMessageType.Info);
-            section.Add(_noKeystoreInfo);
-
-            _keystoreSummary = new Label();
-            _keystoreSummary.style.whiteSpace = WhiteSpace.Normal;
-            _keystoreSummary.style.paddingLeft = 3;
-            _keystoreSummary.style.marginTop = 2;
-            _keystoreSummary.style.marginBottom = 4;
-            _keystoreSummary.style.fontSize = 10;
-            section.Add(_keystoreSummary);
-
-            _passwords = new KeystorePasswordFields();
-            _passwords.Changed += RefreshValidation;
-            section.Add(_passwords);
-
-            _keystoreButtons = CreateButtonRow(("Edit Keystore Profile", "Select the keystore profile to edit its path and alias.", () =>
+            _editKeystoreButton = new Button(() =>
             {
                 var keystore = EasyBuilderSettings.instance.Keystore;
 
@@ -411,28 +424,46 @@ namespace EasyBuilder
 
                 Selection.activeObject = keystore;
                 EditorGUIUtility.PingObject(keystore);
-            }
-            ));
-            section.Add(_keystoreButtons);
-
-            section.Add(CreateButtonRow(("New Keystore Profile…", "Create a keystore profile asset and select it.",
-                () => CreateAssetInto<KeystoreProfileSO>("New Keystore Profile", EasyBuilderSettings.KeystoreProperty, addToList: false))));
-
-            _resolveDependenciesField = new PropertyField(_settings.FindProperty(EasyBuilderSettings.ResolveDependenciesProperty),
-                "Force-Resolve Dependencies (EDM4U)")
+            })
             {
-                tooltip = "Run the External Dependency Manager's Android resolver before each build.",
+                text = "Edit",
+                tooltip = "Select the keystore profile to edit its file and alias in the Inspector.",
             };
-            section.Add(_resolveDependenciesField);
+            keystoreRow.Add(_editKeystoreButton);
+            keystoreRow.Add(new Button(() =>
+                CreateAssetInto<KeystoreProfileSO>("New Keystore Profile", EasyBuilderSettings.KeystoreProperty, addToList: false))
+            {
+                text = "New…",
+                tooltip = "Create a keystore profile asset and select it.",
+            });
+            body.Add(keystoreRow);
 
-            return section;
+            _noKeystoreInfo = CreateHint("None selected: the keystore set in Player Settings is used as it is.");
+            body.Add(_noKeystoreInfo);
+
+            _keystoreSummary = CreateHint(string.Empty);
+            body.Add(_keystoreSummary);
+
+            _passwords = new KeystorePasswordFields();
+            _passwords.Changed += RefreshValidation;
+            body.Add(_passwords);
+
+            return _signingSection;
         }
 
         private VisualElement CreateOutputSection()
         {
-            var section = CreateSection("Output", "Leave empty to be asked for a folder when you build.");
+            _outputSection = new CollapsibleSection("Output", "EasyBuilder.Window.OutputOpen");
+            var body = _outputSection.Content;
 
-            var outputField = new TextField("Output Folder") { isDelayed = true, bindingPath = EasyBuilderSettings.OutputFolderProperty };
+            var outputField = new TextField("Output Folder")
+            {
+                isDelayed = true,
+                bindingPath = EasyBuilderSettings.OutputFolderProperty,
+                tooltip = "Where builds are written. Leave empty to be asked when you build.",
+            };
+            outputField.textEdition.placeholder = "Ask when building";
+            outputField.textEdition.hidePlaceholderOnFocus = true;
             outputField.RegisterValueChangedCallback(_ => RefreshValidation());
 
             var row = WithSideButtons(outputField, ("Browse…", "Choose the folder builds are written to.", BrowseOutputFolder));
@@ -447,14 +478,21 @@ namespace EasyBuilder
                 text = "Open",
             };
             row.Add(_openOutputButton);
-            section.Add(row);
+            body.Add(row);
 
-            section.Add(new PropertyField(_settings.FindProperty(EasyBuilderSettings.OpenOutputFolderProperty), "Open Folder When Done")
+            body.Add(new PropertyField(_settings.FindProperty(EasyBuilderSettings.OpenOutputFolderProperty), "Open Folder When Done")
             {
                 tooltip = "Show the build folder in the file browser when the batch finishes and at least one build succeeded.",
             });
 
-            return section;
+            _resolveDependenciesField = new PropertyField(_settings.FindProperty(EasyBuilderSettings.ResolveDependenciesProperty),
+                "Resolve Android Dependencies")
+            {
+                tooltip = "Force-resolve Android dependencies with the External Dependency Manager (EDM4U) before each Android build.",
+            };
+            body.Add(_resolveDependenciesField);
+
+            return _outputSection;
         }
 
         private void BrowseChangelogHistoryFile()
@@ -504,11 +542,12 @@ namespace EasyBuilder
             var keystore = EasyBuilderSettings.instance.Keystore;
 
             _targetLabel.text = supported ? $"Building for <b>{target}</b>" : $"<b>{target}</b> isn't supported. Switch to Android or iOS.";
+            _targetLabel.style.color = supported ? new StyleColor(StyleKeyword.Null) : new StyleColor(WarningColor);
 
             SetVisible(_signingSection, target == BuildTarget.Android);
             SetVisible(_noKeystoreInfo, keystore == null);
             SetVisible(_keystoreSummary, keystore != null);
-            SetVisible(_keystoreButtons, keystore != null);
+            _editKeystoreButton.SetEnabled(keystore != null);
             SetVisible(_resolveDependenciesField, AndroidDependencyResolver.IsAvailable);
 
             _passwords.SetKeystore(keystore);
@@ -527,12 +566,21 @@ namespace EasyBuilder
             var keystore = settings.Keystore;
 
             // The keystore asset may have been edited in the Inspector.
+            var keystoreProblems = new List<string>();
+
             if (keystore != null)
             {
                 var path = string.IsNullOrEmpty(keystore.Path) ? "no file set" : keystore.Path;
                 var alias = string.IsNullOrEmpty(keystore.AliasName) ? "no alias set" : keystore.AliasName;
                 _keystoreSummary.text = $"File: {path}  ·  Alias: {alias}";
+                keystore.Validate(keystoreProblems);
             }
+
+            // What a collapsed section is set to, and whether it needs a look.
+            _signingSection.Summary = keystore == null ? "Player Settings keystore"
+                : keystoreProblems.Count > 0 ? $"⚠ {keystore.name}: {keystoreProblems[0]}"
+                : $"{keystore.name} ({keystore.AliasName})";
+            _outputSection.Summary = string.IsNullOrEmpty(settings.LastOutputFolder) ? "Ask when building" : settings.LastOutputFolder;
 
             var request = settings.CreateRequest();
             request.OutputFolder = settings.LastOutputFolder;
@@ -542,22 +590,18 @@ namespace EasyBuilder
 
             _statusPanel.SetProblems(errors);
 
-            var hasEmptySlot = _profileList.HasEmptySlot;
-            _addSlotButton.SetEnabled(!hasEmptySlot);
-            _addSlotButton.tooltip = hasEmptySlot
-                ? "There's already an empty slot. Pick a profile in it first."
-                : "Add an empty slot to pick an existing profile asset.";
-
             var outputExists = !string.IsNullOrEmpty(request.OutputFolder) && Directory.Exists(request.OutputFolder);
             _openOutputButton.SetEnabled(outputExists);
             _openOutputButton.tooltip = outputExists ? "Show the folder in the file browser."
                 : string.IsNullOrEmpty(request.OutputFolder) ? "No output folder set yet."
                 : "The folder doesn't exist yet. The first build creates it.";
 
+            // Says exactly what a click builds: "Build v1.2.0 (46) · 2 Profiles · Android".
             var count = request.Profiles.Count;
+            var version = request.Version != null ? $"v{request.Version.Version} ({request.Version.BuildNumber}) · " : string.Empty;
             _buildButton.text = count == 0
                 ? "Build"
-                : $"Build {count} Profile{(count == 1 ? "" : "s")} for {BuildRunner.ActiveTarget}";
+                : $"Build {version}{count} Profile{(count == 1 ? "" : "s")} · {BuildRunner.ActiveTarget}";
             _buildButton.SetEnabled(errors.Count == 0 && !_buildQueued);
             _buildButton.tooltip = errors.Count == 0
                 ? "Build every ticked profile, in order. Project settings are restored afterwards."
