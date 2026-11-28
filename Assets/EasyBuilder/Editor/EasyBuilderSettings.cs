@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace EasyBuilder
 {
@@ -18,12 +19,10 @@ namespace EasyBuilder
         public const string ResolveDependenciesProperty = nameof(forceResolveAndroidDependencies);
         public const string OutputFolderProperty = nameof(lastOutputFolder);
         public const string OpenOutputFolderProperty = nameof(openOutputFolderWhenDone);
-        public const string ChangelogProperty = nameof(changelog);
+        public const string VersionProfileProperty = nameof(versionProfile);
         public const string ChangelogHistoryFileProperty = nameof(changelogHistoryFile);
         public const string ChangelogDetailProperty = nameof(changelogDetail);
         public const string ChangelogAITimeoutProperty = nameof(changelogAITimeout);
-        public const string ChangelogFromProperty = nameof(changelogFrom);
-        public const string ChangelogToProperty = nameof(changelogTo);
 
         [SerializeField] private List<BaseBuildProfileSO> profiles = new();
         [SerializeField] private List<BaseBuildProfileSO> disabledProfiles = new();
@@ -31,13 +30,13 @@ namespace EasyBuilder
         [SerializeField] private bool forceResolveAndroidDependencies = true;
         [SerializeField] private string lastOutputFolder;
         [SerializeField] private bool openOutputFolderWhenDone;
-        [SerializeField, TextArea] private string changelog;
+        [SerializeField] private VersionProfileSO versionProfile;
         [SerializeField] private string changelogHistoryFile;
         [SerializeField] private ChangelogDetail changelogDetail = ChangelogDetail.Normal;
         [SerializeField] private string changelogAI;
         [SerializeField] private int changelogAITimeout = ChangelogGenerator.DefaultTimeoutSeconds;
-        [SerializeField] private string changelogFrom;
-        [SerializeField] private string changelogTo;
+        // Up to v2.1 the notes were kept here; they move into the first version profile created.
+        [SerializeField, FormerlySerializedAs("changelog")] private string legacyChangelog;
         [SerializeField] private bool legacySelectionImported;
 
         public KeystoreProfileSO Keystore => keystore;
@@ -113,11 +112,32 @@ namespace EasyBuilder
 
         public int ChangelogAITimeout => changelogAITimeout;
 
-        /// <summary>The commit, tag or branch the generated changelog starts after. Empty: the last tag.</summary>
-        public string ChangelogFrom => changelogFrom;
+        public ChangelogDetail ChangelogDetail => changelogDetail;
 
-        /// <summary>The last commit, tag or branch the generated changelog includes. Empty: HEAD.</summary>
-        public string ChangelogTo => changelogTo;
+        /// <summary>The version that is built: its version, build number and changelog notes.</summary>
+        public VersionProfileSO VersionProfile => versionProfile;
+
+        /// <summary>Selects the version to build. Undoable.</summary>
+        public void SetVersionProfile(VersionProfileSO value)
+        {
+            Undo.RecordObject(this, "Set Easy Builder Version");
+            versionProfile = value;
+            SaveSettings();
+        }
+
+        /// <summary>Notes written in the window before v2.2, which had no version profiles. Read once, then cleared.</summary>
+        public string TakeLegacyChangelog()
+        {
+            var notes = legacyChangelog;
+
+            if (!string.IsNullOrEmpty(notes))
+            {
+                legacyChangelog = null;
+                SaveSettings();
+            }
+
+            return notes;
+        }
 
         public void SaveSettings() => Save(true);
 
@@ -126,7 +146,8 @@ namespace EasyBuilder
             Profiles = profiles.Where(IsProfileEnabled).ToList(),
             Keystore = keystore,
             ForceResolveAndroidDependencies = forceResolveAndroidDependencies,
-            Changelog = changelog,
+            Version = versionProfile,
+            Changelog = versionProfile != null ? versionProfile.Notes : null,
             ChangelogHistoryFile = changelogHistoryFile,
             ChangelogDetail = changelogDetail,
         };

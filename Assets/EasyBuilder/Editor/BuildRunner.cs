@@ -39,6 +39,12 @@ namespace EasyBuilder
             public bool ForceResolveAndroidDependencies = true;
 
             /// <summary>
+            /// The version to build. Its version and build number are written to Player Settings before building and
+            /// stay there afterwards. When null, Player Settings are used as they are.
+            /// </summary>
+            public VersionProfileSO Version;
+
+            /// <summary>
             /// What changed in this version, one change per line, optionally as <c>type(scope): text</c>. When set, the
             /// notes are grouped by type (features, fixes, …) into Changelog_v&lt;version&gt;_&lt;build&gt;.md in the output folder.
             /// </summary>
@@ -106,14 +112,23 @@ namespace EasyBuilder
             else if (!IsModuleInstalled(target))
                 errors.Add($"{target} Build Support is not installed. Add it through Unity Hub.");
 
-            if (string.IsNullOrWhiteSpace(PlayerSettings.bundleVersion))
-                errors.Add("Version is empty.");
+            if (request.Version != null)
+            {
+                var versionErrors = new List<string>();
+                request.Version.Validate(versionErrors);
+                errors.AddRange(versionErrors.Select(error => $"Version '{request.Version.name}': {error}"));
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(PlayerSettings.bundleVersion))
+                    errors.Add("Version is empty.");
 
-            if (target == BuildTarget.Android && PlayerSettings.Android.bundleVersionCode < 1)
-                errors.Add("Build number must be 1 or higher.");
+                if (target == BuildTarget.Android && PlayerSettings.Android.bundleVersionCode < 1)
+                    errors.Add("Build number must be 1 or higher.");
 
-            if (target == BuildTarget.iOS && string.IsNullOrWhiteSpace(PlayerSettings.iOS.buildNumber))
-                errors.Add("Build number is empty.");
+                if (target == BuildTarget.iOS && string.IsNullOrWhiteSpace(PlayerSettings.iOS.buildNumber))
+                    errors.Add("Build number is empty.");
+            }
 
             var profiles = request.Profiles?.Where(profile => profile != null).ToList() ?? new List<BaseBuildProfileSO>();
 
@@ -178,6 +193,9 @@ namespace EasyBuilder
             var results = new List<ProfileResult>();
 
             Directory.CreateDirectory(request.OutputFolder);
+
+            // Before the snapshot, so the version stays in Player Settings when the snapshot is restored.
+            request.Version?.Apply();
 
             var batchSnapshot = BuildSettingsSnapshot.Capture(ActiveNamedTarget);
             var holder = BatchAssetHolder.Create(profiles.Cast<UnityEngine.Object>().Append(request.Keystore));
@@ -488,10 +506,13 @@ namespace EasyBuilder
         /// <item><c>-ebOutput &lt;folder&gt;</c> (required) where builds are written.</item>
         /// <item><c>-ebProfiles "&lt;a&gt;;&lt;b&gt;"</c> profile asset paths or GUIDs. Defaults to the window's selection.</item>
         /// <item><c>-ebKeystore &lt;asset path or GUID&gt;</c> keystore profile. Defaults to the window's selection.</item>
-        /// <item><c>-ebVersion &lt;version&gt;</c> and <c>-ebBuildNumber &lt;number&gt;</c> set them before building.</item>
+        /// <item><c>-ebVersionProfile &lt;asset path or GUID&gt;</c> the version to build: its version, build number and
+        /// changelog notes. Defaults to the window's selection.</item>
+        /// <item><c>-ebVersion &lt;version&gt;</c> and <c>-ebBuildNumber &lt;number&gt;</c> set them before building, without a
+        /// version profile.</item>
         /// <item><c>-ebSkipDependencyResolve</c> skips the EDM4U Android dependency resolve.</item>
         /// <item><c>-ebChangelog "&lt;text&gt;"</c> or <c>-ebChangelogFile &lt;path&gt;</c> the changes in this version,
-        /// written to a changelog file next to the builds. Defaults to the window's notes.</item>
+        /// written to a changelog file next to the builds. Defaults to the version profile's notes.</item>
         /// <item><c>-ebChangelogHistory &lt;path&gt;</c> a running changelog (e.g. CHANGELOG.md) to add this version to.
         /// Defaults to the window's setting.</item>
         /// <item><c>-ebChangelogDetail Brief|Normal|Detailed</c> which changes are written. Defaults to the window's setting.</item>
@@ -527,10 +548,22 @@ namespace EasyBuilder
                 Keystore = saved.Keystore,
                 OutputFolder = GetArgument(args, "-ebOutput"),
                 ForceResolveAndroidDependencies = !args.Contains("-ebSkipDependencyResolve"),
+                Version = saved.Version,
                 Changelog = saved.Changelog,
                 ChangelogHistoryFile = saved.ChangelogHistoryFile,
                 ChangelogDetail = saved.ChangelogDetail,
             };
+
+            var versionProfileArgument = GetArgument(args, "-ebVersionProfile");
+
+            if (versionProfileArgument != null)
+            {
+                request.Version = LoadAsset<VersionProfileSO>(versionProfileArgument);
+                request.Changelog = request.Version != null ? request.Version.Notes : null;
+
+                if (request.Version == null)
+                    errors.Add($"Version profile not found: {versionProfileArgument}");
+            }
 
             var changelogText = GetArgument(args, "-ebChangelog");
             var changelogFile = GetArgument(args, "-ebChangelogFile");
@@ -598,11 +631,19 @@ namespace EasyBuilder
                 request.OutputFolder = Path.GetFullPath(request.OutputFolder);
 
             var version = GetArgument(args, "-ebVersion");
+            var buildNumber = GetArgument(args, "-ebBuildNumber");
+
+            // A version profile would overwrite them when the build starts.
+            if ((version != null || buildNumber != null) && request.Version != null)
+            {
+                if (versionProfileArgument != null)
+                    errors.Add("Pass either -ebVersionProfile or -ebVersion/-ebBuildNumber, not both.");
+                else
+                    request.Version = null; // Only the window's selection; the arguments win.
+            }
 
             if (version != null)
                 PlayerSettings.bundleVersion = version;
-
-            var buildNumber = GetArgument(args, "-ebBuildNumber");
 
             if (buildNumber != null)
             {

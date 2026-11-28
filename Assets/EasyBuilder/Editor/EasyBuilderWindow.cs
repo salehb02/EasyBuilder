@@ -21,9 +21,14 @@ namespace EasyBuilder
         private SerializedObject _settings;
 
         private Label _targetLabel;
-        private TextField _versionField;
-        private IntegerField _androidBuildNumberField;
-        private TextField _iosBuildNumberField;
+        private VisualElement _versionPopupHolder;
+        private PopupField<VersionProfileSO> _versionPopup;
+        private string _versionKeys;
+        private Button _selectVersionButton;
+        private HelpBox _noVersionInfo;
+        private VersionProfileFields _versionFields;
+        private VisualElement _versionSettings;
+        private ChangelogAIField _changelogAIField;
         private VisualElement _signingSection;
         private HelpBox _noKeystoreInfo;
         private Label _keystoreSummary;
@@ -35,15 +40,7 @@ namespace EasyBuilder
         private Button _buildButton;
         private Button _addSlotButton;
         private Button _openOutputButton;
-        private Button _generateChangelogButton;
-        private VisualElement _changelogAIFieldHolder;
-        private PopupField<ChangelogAI> _changelogAIField;
-        private string _changelogAIIds;
-        private HelpBox _changelogAIMissing;
-        private System.Threading.CancellationTokenSource _generateCancellation;
         private bool _buildQueued;
-
-        private const string GenerateChangelogText = "Generate";
 
         [MenuItem("Tools/DevDude/Easy Builder")]
         public static void OpenBuilder()
@@ -64,9 +61,6 @@ namespace EasyBuilder
         private void OnDisable()
         {
             Undo.undoRedoPerformed -= OnUndoRedo;
-
-            // Closing the window or a script reload stops a running AI tool instead of leaving it behind.
-            _generateCancellation?.Cancel();
         }
 
         private void OnUndoRedo()
@@ -110,12 +104,15 @@ namespace EasyBuilder
             content.Add(CreateVersionSection());
             content.Add(CreateProfilesSection());
             content.Add(_signingSection = CreateSigningSection());
-            content.Add(CreateChangelogSection());
-            content.Add(CreateOutputSection());
+            var outputSection = CreateOutputSection();
+            content.Add(outputSection);
 
             root.Add(CreateFooter());
 
-            root.Bind(_settings);
+            // Bound part by part: the version fields are bound to the selected version asset instead.
+            _versionSettings.Bind(_settings);
+            _signingSection.Bind(_settings);
+            outputSection.Bind(_settings);
             root.TrackSerializedObjectValue(_settings, _ =>
             {
                 EasyBuilderSettings.instance.SaveSettings();
@@ -167,45 +164,197 @@ namespace EasyBuilder
 
         private VisualElement CreateVersionSection()
         {
-            var section = CreateSection("Version", "Applies to every profile. Changes are written to Player Settings.");
+            var section = CreateSection("Version",
+                "One asset per release, with its build number and changelog notes. The selected one is written to Player Settings and built.");
 
-            _versionField = new TextField("Version") { isDelayed = true, tooltip = "PlayerSettings.bundleVersion" };
-            _versionField.RegisterValueChangedCallback(evt =>
+            // Pick a version, or make the next one.
+            var pickRow = new VisualElement();
+            pickRow.style.flexDirection = FlexDirection.Row;
+            _versionPopupHolder = new VisualElement();
+            _versionPopupHolder.style.flexGrow = 1;
+            _versionPopupHolder.style.flexShrink = 1;
+            pickRow.Add(_versionPopupHolder);
+
+            _selectVersionButton = new Button(() =>
             {
-                PlayerSettings.bundleVersion = evt.newValue.Trim();
-                RefreshValidation();
-            });
-            section.Add(_versionField);
+                var profile = EasyBuilderSettings.instance.VersionProfile;
 
-            _androidBuildNumberField = new IntegerField("Build Number")
+                if (profile == null)
+                    return;
+
+                Selection.activeObject = profile;
+                EditorGUIUtility.PingObject(profile);
+            })
+            {
+                text = "Select",
+                tooltip = "Show the version asset in the Project window.",
+            };
+            pickRow.Add(_selectVersionButton);
+
+            Button newVersionButton = null;
+            newVersionButton = new Button(() => ShowNewVersionMenu(newVersionButton))
+            {
+                text = "New Version ▾",
+                tooltip = "Create the next version: patch, minor or major, with the next build number and empty notes.",
+            };
+            newVersionButton.style.unityFontStyleAndWeight = FontStyle.Bold;
+            pickRow.Add(newVersionButton);
+            section.Add(pickRow);
+
+            _noVersionInfo = new HelpBox(string.Empty, HelpBoxMessageType.Info);
+            section.Add(_noVersionInfo);
+
+            // The selected version's fields, edited in place.
+            _versionFields = new VersionProfileFields();
+            _versionFields.style.marginTop = 4;
+            _versionFields.Changed += () =>
+            {
+                RefreshVersion();
+                RefreshValidation();
+            };
+            section.Add(_versionFields);
+
+            // Window settings, the same for every version. Bound to the window's settings, not the version.
+            _versionSettings = new VisualElement();
+
+            var options = new Foldout { text = "Options", value = false, viewDataKey = "EasyBuilderChangelogOptions" };
+            _versionSettings.Add(options);
+
+            _changelogAIField = new ChangelogAIField();
+            _changelogAIField.Changed += () => _versionFields.RefreshAI();
+            options.Add(_changelogAIField);
+
+            options.Add(new PropertyField(_settings.FindProperty(EasyBuilderSettings.ChangelogDetailProperty), "Detail Level")
+            {
+                tooltip = "Which changes the notes list, both when generating and when writing the changelog file. " +
+                          "Brief: features, fixes and untagged notes. Normal: also performance and other changes, with scopes. " +
+                          "Detailed: everything, including docs, maintenance and indented detail lines. Breaking changes are always listed.",
+            });
+
+            var timeoutField = new IntegerField("AI Timeout (s)")
             {
                 isDelayed = true,
-                tooltip = $"Android version code, 1 to {BuildRunner.MaxAndroidVersionCode}.",
+                bindingPath = EasyBuilderSettings.ChangelogAITimeoutProperty,
+                tooltip = $"Stop waiting for the AI after this many seconds ({ChangelogGenerator.MinTimeoutSeconds} to {ChangelogGenerator.MaxTimeoutSeconds}).",
             };
-            _androidBuildNumberField.RegisterValueChangedCallback(evt =>
+            timeoutField.RegisterValueChangedCallback(evt =>
             {
-                var buildNumber = Mathf.Clamp(evt.newValue, 1, BuildRunner.MaxAndroidVersionCode);
+                var clamped = Mathf.Clamp(evt.newValue, ChangelogGenerator.MinTimeoutSeconds, ChangelogGenerator.MaxTimeoutSeconds);
 
-                if (buildNumber != evt.newValue)
-                    _androidBuildNumberField.SetValueWithoutNotify(buildNumber);
-
-                PlayerSettings.Android.bundleVersionCode = buildNumber;
-                RefreshValidation();
+                if (clamped != evt.newValue)
+                    SetSetting(EasyBuilderSettings.ChangelogAITimeoutProperty, property => property.intValue = clamped);
             });
-            section.Add(WithSideButtons(_androidBuildNumberField, ("+1", "Increment the build number.", () => BumpBuildNumber())));
+            options.Add(timeoutField);
 
-            _iosBuildNumberField = new TextField("Build Number") { isDelayed = true, tooltip = "iOS build number (CFBundleVersion)." };
-            _iosBuildNumberField.RegisterValueChangedCallback(evt =>
+            var historyField = new TextField("History File")
             {
-                PlayerSettings.iOS.buildNumber = evt.newValue.Trim();
-                RefreshValidation();
-            });
-            section.Add(WithSideButtons(_iosBuildNumberField, ("+1", "Increment the build number.", () => BumpBuildNumber())));
+                isDelayed = true,
+                bindingPath = EasyBuilderSettings.ChangelogHistoryFileProperty,
+                tooltip = "Optional, e.g. CHANGELOG.md (relative to the project folder). When every profile builds, " +
+                          "this version's notes are added at the top. Rebuilding the same version and build number replaces its entry.",
+            };
+            historyField.RegisterValueChangedCallback(_ => RefreshValidation());
+            options.Add(WithSideButtons(historyField, ("Browse…", "Choose or create the changelog history file.", BrowseChangelogHistoryFile)));
 
-            section.Add(CreateButtonRow(("Player Settings…", "Open Project Settings > Player.",
-                () => SettingsService.OpenProjectSettings("Project/Player"))));
-
+            section.Add(_versionSettings);
             return section;
+        }
+
+        // Shows the version list and the selected version's fields, and keeps Player Settings in step with it.
+        private void RefreshVersion()
+        {
+            var settings = EasyBuilderSettings.instance;
+            var all = VersionProfileSO.FindAll();
+            var selected = settings.VersionProfile;
+
+            // Nothing selected (a new machine: the selection is per user) or the asset was deleted: take the newest.
+            if (selected == null && all.Count > 0)
+            {
+                selected = all[0];
+                settings.SetVersionProfile(selected);
+                _settings.Update();
+            }
+
+            // Rebuild the popup only when the list or a name changed, so an open popup isn't closed every time.
+            var key = string.Join("|", all.Select(profile => profile.GetInstanceID() + ":" + profile.DisplayName));
+
+            if (_versionPopup == null || key != _versionKeys)
+            {
+                _versionKeys = key;
+                _versionPopupHolder.Clear();
+                _versionPopup = null;
+
+                if (all.Count > 0)
+                {
+                    _versionPopup = new PopupField<VersionProfileSO>("Release", all, all.Contains(selected) ? selected : all[0],
+                        profile => profile.DisplayName, profile => profile.DisplayName)
+                    {
+                        tooltip = "The version to build. Newest first.",
+                    };
+                    _versionPopup.RegisterValueChangedCallback(evt =>
+                    {
+                        EasyBuilderSettings.instance.SetVersionProfile(evt.newValue);
+                        _settings.Update();
+                        RefreshVersion();
+                        RefreshValidation();
+                    });
+                    _versionPopupHolder.Add(_versionPopup);
+                }
+            }
+            else if (selected != null && all.Contains(selected))
+            {
+                _versionPopup.SetValueWithoutNotify(selected);
+            }
+
+            SetVisible(_versionPopupHolder, all.Count > 0);
+            SetVisible(_selectVersionButton, selected != null);
+            SetVisible(_noVersionInfo, selected == null);
+            SetVisible(_versionFields, selected != null);
+            _noVersionInfo.text = "No versions yet. Click New Version to start from Player Settings " +
+                                  $"({PlayerSettings.bundleVersion}, build {PlayerSettings.Android.bundleVersionCode}).";
+
+            _versionFields.SetProfile(selected);
+            _changelogAIField.Refresh();
+            _versionFields.RefreshAI();
+
+            // The selected version is the source of truth; Apply does nothing when they already match.
+            if (selected != null)
+                selected.Apply();
+        }
+
+        private void ShowNewVersionMenu(Button button)
+        {
+            var current = EasyBuilderSettings.instance.VersionProfile;
+            var baseVersion = current != null ? current.Version : PlayerSettings.bundleVersion;
+            var menu = new GenericMenu();
+
+            if (current == null)
+            {
+                menu.AddItem(new GUIContent($"From Player Settings  ({PlayerSettings.bundleVersion}, build {PlayerSettings.Android.bundleVersionCode})"),
+                    false, () => CreateVersion(null));
+                menu.AddSeparator(string.Empty);
+            }
+
+            foreach (var bump in new[] { VersionProfileSO.Bump.Patch, VersionProfileSO.Bump.Minor, VersionProfileSO.Bump.Major })
+                menu.AddItem(new GUIContent($"{bump}  →  {VersionProfileSO.BumpVersion(baseVersion, bump)}"), false, () => CreateVersion(bump));
+
+            menu.DropDown(button.worldBound);
+        }
+
+        private void CreateVersion(VersionProfileSO.Bump? bump)
+        {
+            var settings = EasyBuilderSettings.instance;
+
+            // Notes written in the window before version profiles existed go into the first one.
+            var notes = VersionProfileSO.FindAll().Count == 0 ? settings.TakeLegacyChangelog() : null;
+
+            var profile = VersionProfileSO.CreateNext(settings.VersionProfile, bump, notes);
+            settings.SetVersionProfile(profile);
+            _settings.Update();
+
+            EditorGUIUtility.PingObject(profile);
+            Debug.Log($"[EasyBuilder] Created version {profile.DisplayName} at {AssetDatabase.GetAssetPath(profile)}.");
+            RefreshFromProject();
         }
 
         private VisualElement CreateProfilesSection()
@@ -308,287 +457,6 @@ namespace EasyBuilder
             return section;
         }
 
-        private VisualElement CreateChangelogSection()
-        {
-            var section = CreateSection("Changelog",
-                "Written next to the builds as Changelog_v<version>_<build>.md. Leave the notes empty to skip.");
-
-            // 1. Generate: the AI (see RefreshChangelogAI) and the button, then the commit range.
-            var aiRow = new VisualElement();
-            aiRow.style.flexDirection = FlexDirection.Row;
-            _changelogAIFieldHolder = new VisualElement();
-            _changelogAIFieldHolder.style.flexGrow = 1;
-            _changelogAIFieldHolder.style.flexShrink = 1;
-            aiRow.Add(_changelogAIFieldHolder);
-
-            _generateChangelogButton = new Button(OnGenerateChangelogClicked) { text = GenerateChangelogText };
-            _generateChangelogButton.style.unityFontStyleAndWeight = FontStyle.Bold;
-            _generateChangelogButton.style.minWidth = 90;
-            aiRow.Add(_generateChangelogButton);
-            section.Add(aiRow);
-
-            _changelogAIMissing = new HelpBox(string.Empty, HelpBoxMessageType.Info);
-            section.Add(_changelogAIMissing);
-
-            section.Add(CreateCommitRangeRow());
-
-            // 2. The notes, which the AI fills in and you can edit.
-            var notesField = new TextField { multiline = true, isDelayed = true, bindingPath = EasyBuilderSettings.ChangelogProperty };
-            notesField.textEdition.placeholder = "feat: New shop\nfix(ui): Button overlap\n\nOne change per line, or Generate them.";
-            notesField.textEdition.hidePlaceholderOnFocus = true;
-            notesField.style.minHeight = 80;
-            notesField.style.marginTop = 4;
-            notesField.style.whiteSpace = WhiteSpace.Normal;
-            section.Add(notesField);
-
-            section.Add(new PropertyField(_settings.FindProperty(EasyBuilderSettings.ChangelogDetailProperty), "Detail Level")
-            {
-                tooltip = "Brief: features, fixes and untagged notes. Normal: also performance and other changes, with scopes. " +
-                          "Detailed: everything, including docs, maintenance and indented detail lines. Breaking changes are always listed.",
-            });
-
-            // 3. Set-once settings, out of the way.
-            var options = new Foldout { text = "Options", value = false, viewDataKey = "EasyBuilderChangelogOptions" };
-            section.Add(options);
-
-            var timeoutField = new IntegerField("AI Timeout (s)")
-            {
-                isDelayed = true,
-                bindingPath = EasyBuilderSettings.ChangelogAITimeoutProperty,
-                tooltip = $"Stop waiting for the AI after this many seconds ({ChangelogGenerator.MinTimeoutSeconds} to {ChangelogGenerator.MaxTimeoutSeconds}).",
-            };
-            timeoutField.RegisterValueChangedCallback(evt =>
-            {
-                var clamped = Mathf.Clamp(evt.newValue, ChangelogGenerator.MinTimeoutSeconds, ChangelogGenerator.MaxTimeoutSeconds);
-
-                if (clamped != evt.newValue)
-                    SetSetting(EasyBuilderSettings.ChangelogAITimeoutProperty, property => property.intValue = clamped);
-            });
-            options.Add(timeoutField);
-
-            var historyField = new TextField("History File")
-            {
-                isDelayed = true,
-                bindingPath = EasyBuilderSettings.ChangelogHistoryFileProperty,
-                tooltip = "Optional, e.g. CHANGELOG.md (relative to the project folder). When every profile builds, " +
-                          "this version's notes are added at the top. Rebuilding the same version and build number replaces its entry.",
-            };
-            historyField.RegisterValueChangedCallback(_ => RefreshValidation());
-            options.Add(WithSideButtons(historyField, ("Browse…", "Choose or create the changelog history file.", BrowseChangelogHistoryFile)));
-
-            return section;
-        }
-
-        // "Commits  [last tag][▾] → [HEAD][▾]": both ends included; empty ends show what they default to.
-        private VisualElement CreateCommitRangeRow()
-        {
-            var row = new VisualElement();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
-
-            var label = new Label("Commits")
-            {
-                tooltip = "The commits to generate from, both ends included. Type a commit hash, tag or branch, or pick one with ▾.",
-            };
-            label.AddToClassList(BaseField<string>.labelUssClassName);
-            label.style.marginLeft = 3; // A field's own margin, so it lines up with the labels above and below.
-            row.Add(label);
-
-            row.Add(CreateRevisionField(EasyBuilderSettings.ChangelogFromProperty, "after last tag",
-                "First commit, tag or branch (included). Empty: the commits after the newest tag."));
-
-            var arrow = new Label("→");
-            arrow.style.marginLeft = arrow.style.marginRight = 3;
-            row.Add(arrow);
-
-            row.Add(CreateRevisionField(EasyBuilderSettings.ChangelogToProperty, "HEAD",
-                "Last commit, tag or branch (included). Empty: the current commit (HEAD)."));
-
-            return row;
-        }
-
-        // A commit, tag or branch, typed in or picked from the recent tags and commits in one flat menu.
-        private VisualElement CreateRevisionField(string propertyName, string placeholder, string tooltip)
-        {
-            var field = new TextField { isDelayed = true, bindingPath = propertyName, tooltip = tooltip };
-            field.textEdition.placeholder = placeholder;
-            field.textEdition.hidePlaceholderOnFocus = true;
-            field.style.flexGrow = 1;
-            field.style.flexShrink = 1;
-            field.style.minWidth = 60;
-            field.style.marginRight = 0;
-
-            Button pick = null;
-            pick = CreateIconButton("icon dropdown", "▾", "Pick a recent tag or commit.", () =>
-            {
-                var (tags, commits) = ChangelogGenerator.GetRecentRevisions(15);
-                var menu = new GenericMenu();
-
-                void Add(string text, string value) =>
-                    menu.AddItem(new GUIContent(text.Replace('/', '∕')), field.value == value, // '/' would make a submenu.
-                        () => SetSetting(propertyName, property => property.stringValue = value));
-
-                Add($"Default ({placeholder})", string.Empty);
-
-                if (tags.Count > 0)
-                {
-                    menu.AddSeparator(string.Empty);
-                    menu.AddDisabledItem(new GUIContent("Tags"));
-                    tags.ForEach(tag => Add(tag, tag));
-                }
-
-                if (commits.Count > 0)
-                {
-                    menu.AddSeparator(string.Empty);
-                    menu.AddDisabledItem(new GUIContent("Recent commits"));
-
-                    foreach (var (hash, subject) in commits)
-                        Add($"{hash}  {(subject.Length > 50 ? subject.Substring(0, 50) + "…" : subject)}", hash);
-                }
-
-                menu.DropDown(pick.worldBound);
-            });
-
-            var group = new VisualElement();
-            group.style.flexDirection = FlexDirection.Row;
-            group.style.flexGrow = 1;
-            group.style.flexShrink = 1;
-            group.style.flexBasis = 0;
-            group.Add(field);
-            group.Add(pick);
-            return group;
-        }
-
-        // AI tools can be installed or removed while the editor is open, so this runs whenever the window gets focus.
-        private void RefreshChangelogAI()
-        {
-            var installed = ChangelogGenerator.All.Where(ai => ai.IsAvailable()).Select(ai => ai.Id).ToList();
-            var installedKey = string.Join(",", installed);
-            var selected = ChangelogGenerator.Resolve(EasyBuilderSettings.instance.ChangelogAI);
-
-            // Rebuild the popup only when what's installed changed (the labels show it), so an open popup isn't
-            // closed every time.
-            if (_changelogAIField == null || installedKey != _changelogAIIds)
-            {
-                _changelogAIIds = installedKey;
-                _changelogAIFieldHolder.Clear();
-
-                string Label(ChangelogAI ai) => installed.Contains(ai.Id) ? ai.DisplayName : $"{ai.DisplayName} (not installed)";
-
-                _changelogAIField = new PopupField<ChangelogAI>("AI", ChangelogGenerator.All.ToList(), selected, Label, Label)
-                {
-                    tooltip = "The AI that writes the notes. Command-line tools use your own login, so sign in to them once in a terminal.",
-                };
-                _changelogAIField.RegisterValueChangedCallback(evt =>
-                {
-                    EasyBuilderSettings.instance.ChangelogAI = evt.newValue?.Id;
-                    RefreshChangelogAI();
-                });
-                _changelogAIField.SetEnabled(_generateCancellation == null);
-                _changelogAIFieldHolder.Add(_changelogAIField);
-            }
-            else
-            {
-                _changelogAIField.SetValueWithoutNotify(selected);
-            }
-
-            var isInstalled = installed.Contains(selected.Id);
-            SetVisible(_changelogAIMissing, !isInstalled);
-            _changelogAIMissing.text = $"{selected.DisplayName} isn't installed. {selected.InstallHint}";
-
-            // While generating, the button is the Cancel button.
-            if (_generateCancellation != null)
-                return;
-
-            _generateChangelogButton.SetEnabled(isInstalled);
-            _generateChangelogButton.tooltip = isInstalled
-                ? $"Write the notes with {selected.DisplayName} from the git commits in the From–To range (by default, since the last tag), at the selected detail level."
-                : $"{selected.DisplayName} isn't installed. Pick another AI, or install it.";
-        }
-
-        private void OnGenerateChangelogClicked()
-        {
-            if (_generateCancellation != null)
-                _generateCancellation.Cancel();
-            else
-                GenerateChangelog();
-        }
-
-        private async void GenerateChangelog()
-        {
-            var settings = EasyBuilderSettings.instance;
-            var current = settings.CreateRequest();
-            var ai = ChangelogGenerator.Resolve(settings.ChangelogAI);
-
-            // It may have been uninstalled since the window last checked.
-            if (!ai.IsAvailable())
-            {
-                RefreshChangelogAI();
-                return;
-            }
-
-            var append = false;
-
-            if (!string.IsNullOrWhiteSpace(current.Changelog))
-            {
-                var choice = EditorUtility.DisplayDialogComplex("Auto Generate Changelog",
-                    "The changelog already has notes. Replace them, or add the generated notes below them?", "Replace", "Cancel", "Add Below");
-
-                if (choice == 1)
-                    return;
-
-                append = choice == 2;
-            }
-
-            _generateCancellation = new System.Threading.CancellationTokenSource();
-            _generateChangelogButton.text = "Cancel";
-            _generateChangelogButton.tooltip = $"Stop waiting for {ai.DisplayName}.";
-
-            // "Cancel (12s)", so it's clear the AI is still working.
-            var started = System.DateTime.UtcNow;
-            var ticker = _generateChangelogButton.schedule.Execute(() =>
-                _generateChangelogButton.text = $"Cancel ({(int)(System.DateTime.UtcNow - started).TotalSeconds}s)").Every(1000);
-            _changelogAIField?.SetEnabled(false);
-            Debug.Log($"[EasyBuilder] Generating the changelog with {ai.DisplayName}...");
-
-            try
-            {
-                var generated = await ChangelogGenerator.GenerateAsync(ai, current.ChangelogDetail, settings.ChangelogAITimeout,
-                    settings.ChangelogFrom, settings.ChangelogTo, _generateCancellation.Token);
-
-                // The window may have been closed while the AI was answering.
-                if (_settings == null || _settings.targetObject == null)
-                    return;
-
-                var notes = append ? Changelog.Normalize(current.Changelog) + "\n" + generated : generated;
-                SetSetting(EasyBuilderSettings.ChangelogProperty, property => property.stringValue = notes);
-                Debug.Log($"[EasyBuilder] {ai.DisplayName} wrote the changelog notes. Review them before building.");
-            }
-            catch (System.OperationCanceledException)
-            {
-                Debug.Log("[EasyBuilder] Changelog generation canceled.");
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogException(e);
-                EditorUtility.DisplayDialog("Auto Generate Changelog",
-                    $"{ai.DisplayName} couldn't generate the changelog:\n\n" + Truncate(e.Message), "OK");
-            }
-            finally
-            {
-                ticker.Pause();
-                _generateCancellation.Dispose();
-                _generateCancellation = null;
-
-                if (_generateChangelogButton != null)
-                {
-                    _generateChangelogButton.text = GenerateChangelogText;
-                    _changelogAIField?.SetEnabled(true);
-                    RefreshChangelogAI();
-                }
-            }
-        }
-
         private void BrowseChangelogHistoryFile()
         {
             var current = EasyBuilderSettings.instance.CreateRequest().ChangelogHistoryFile;
@@ -625,7 +493,7 @@ namespace EasyBuilder
 
         private void RefreshFromProject()
         {
-            if (_versionField == null)
+            if (_versionFields == null)
                 return; // The GUI hasn't been built yet.
 
             // The selection may have been changed from a profile or keystore inspector.
@@ -637,12 +505,6 @@ namespace EasyBuilder
 
             _targetLabel.text = supported ? $"Building for <b>{target}</b>" : $"<b>{target}</b> isn't supported. Switch to Android or iOS.";
 
-            _versionField.SetValueWithoutNotify(PlayerSettings.bundleVersion);
-            _androidBuildNumberField.SetValueWithoutNotify(PlayerSettings.Android.bundleVersionCode);
-            _iosBuildNumberField.SetValueWithoutNotify(PlayerSettings.iOS.buildNumber);
-            SetVisible(_androidBuildNumberField.parent, target != BuildTarget.iOS);
-            SetVisible(_iosBuildNumberField.parent, target == BuildTarget.iOS);
-
             SetVisible(_signingSection, target == BuildTarget.Android);
             SetVisible(_noKeystoreInfo, keystore == null);
             SetVisible(_keystoreSummary, keystore != null);
@@ -651,7 +513,7 @@ namespace EasyBuilder
 
             _passwords.SetKeystore(keystore);
             _profileList.Refresh();
-            RefreshChangelogAI();
+            RefreshVersion();
             RefreshValidation();
         }
 
@@ -676,7 +538,7 @@ namespace EasyBuilder
             request.OutputFolder = settings.LastOutputFolder;
 
             var errors = new List<string>();
-            BuildRunner.Validate(request, errors, checkOutputFolder: !string.IsNullOrEmpty(request.OutputFolder));
+            ValidateRequest(request, errors, checkOutputFolder: !string.IsNullOrEmpty(request.OutputFolder));
 
             _statusPanel.SetProblems(errors);
 
@@ -700,12 +562,6 @@ namespace EasyBuilder
             _buildButton.tooltip = errors.Count == 0
                 ? "Build every ticked profile, in order. Project settings are restored afterwards."
                 : "Fix the problems listed above first.";
-        }
-
-        private void BumpBuildNumber()
-        {
-            BuildRunner.IncrementBuildNumber(BuildRunner.ActiveTarget);
-            RefreshFromProject();
         }
 
         private void BrowseOutputFolder()
@@ -793,7 +649,7 @@ namespace EasyBuilder
             var request = settings.CreateRequest();
             var errors = new List<string>();
 
-            if (!BuildRunner.Validate(request, errors, checkOutputFolder: false))
+            if (!ValidateRequest(request, errors, checkOutputFolder: false))
             {
                 ShowErrors(errors);
                 return;
@@ -823,7 +679,7 @@ namespace EasyBuilder
 
             request.OutputFolder = outputFolder;
 
-            if (!BuildRunner.Validate(request, errors))
+            if (!ValidateRequest(request, errors, checkOutputFolder: true))
             {
                 ShowErrors(errors);
                 return;
@@ -831,6 +687,15 @@ namespace EasyBuilder
 
             var results = BuildRunner.Run(request);
             ShowSummary(results, request.Profiles.Count, outputFolder, request.WrittenChangelogPath, settings.OpenOutputFolderWhenDone);
+        }
+
+        // The window always builds a version profile; the command line can also use Player Settings as they are.
+        private static bool ValidateRequest(BuildRunner.Request request, List<string> errors, bool checkOutputFolder)
+        {
+            if (request.Version == null)
+                errors.Add("No version selected. Click New Version to create one.");
+
+            return BuildRunner.Validate(request, errors, checkOutputFolder);
         }
 
         private static void ShowErrors(List<string> errors)
