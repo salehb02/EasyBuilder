@@ -123,6 +123,8 @@ The window builds every selected profile in order:
 The batch stops at the first failed or canceled build. All builds go into the folder you pick, named
 `<package>_v<version>_<build number>_<profile name>` (`.apk` or `.aab` for single-file Android builds; split APKs, exported Gradle projects and Xcode projects are folders).
 
+Split APKs are named after their folder plus the CPU architecture, for example `com.company.game_v1.2_7_Production/com.company.game_v1.2_7_Production.arm64-v8a.apk`, so APKs from different profiles and versions never share a name. (Unity itself names them after the product name.)
+
 Turn on **Open Folder When Done** in the Output section to show the build folder as soon as the batch finishes (when at least one build succeeded).
 
 The size in the summary is the size of the APK, AAB or project folder that was written to disk.
