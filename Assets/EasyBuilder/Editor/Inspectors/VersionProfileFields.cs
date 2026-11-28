@@ -18,7 +18,7 @@ namespace EasyBuilder
         private const string GenerateText = "Generate";
 
         private readonly Button _generateButton;
-        private readonly HelpBox _aiMissing;
+        private readonly HelpBox _cantGenerateInfo;
 
         private VersionProfileSO _profile;
         private SerializedObject _serialized;
@@ -64,8 +64,8 @@ namespace EasyBuilder
             commitRow.Add(_generateButton);
             Add(commitRow);
 
-            _aiMissing = new HelpBox(string.Empty, HelpBoxMessageType.Info);
-            Add(_aiMissing);
+            _cantGenerateInfo = new HelpBox(string.Empty, HelpBoxMessageType.Info);
+            Add(_cantGenerateInfo);
 
             var notesField = new TextField { multiline = true, isDelayed = true, bindingPath = VersionProfileSO.NotesProperty };
             notesField.textEdition.placeholder = "feat: New shop\nfix(ui): Button overlap\n\nOne change per line, or Generate them.";
@@ -157,7 +157,6 @@ namespace EasyBuilder
             Button pick = null;
             pick = CreateIconButton("icon dropdown", "▾", "Pick a recent tag or commit.", () =>
             {
-                var (tags, commits) = ChangelogGenerator.GetRecentRevisions(15);
                 var menu = new GenericMenu();
 
                 void AddItem(string text, string value) =>
@@ -165,6 +164,17 @@ namespace EasyBuilder
                         () => Set(propertyName, property => property.stringValue = value));
 
                 AddItem($"Default ({placeholder})", string.Empty);
+
+                // Say why there's nothing to pick, instead of a menu that looks empty.
+                if (ChangelogGenerator.GetGitProblem() is { } gitProblem)
+                {
+                    menu.AddSeparator(string.Empty);
+                    menu.AddDisabledItem(new GUIContent(gitProblem.Replace('/', '∕')));
+                    menu.DropDown(pick.worldBound);
+                    return;
+                }
+
+                var (tags, commits) = ChangelogGenerator.GetRecentRevisions(15);
 
                 if (tags.Count > 0)
                 {
@@ -203,20 +213,29 @@ namespace EasyBuilder
         {
             var selected = ChangelogGenerator.Resolve(EasyBuilderSettings.instance.ChangelogAI);
             var isInstalled = selected.IsAvailable();
+            var gitProblem = ChangelogGenerator.GetGitProblem();
 
-            SetVisible(_aiMissing, !isInstalled);
-            _aiMissing.text = $"{selected.DisplayName} isn't installed. {selected.InstallHint} " +
-                              "Or pick another AI under Options in the Easy Builder window.";
+            // Disabled buttons don't always show their tooltip, so the reasons are also written out here.
+            var reasons = new System.Collections.Generic.List<string>();
+
+            if (gitProblem != null)
+                reasons.Add($"Can't generate: {gitProblem}");
+
+            if (!isInstalled)
+                reasons.Add($"{selected.DisplayName} isn't installed. {selected.InstallHint} Or pick another AI under Options in the Easy Builder window.");
+
+            SetVisible(_cantGenerateInfo, reasons.Count > 0);
+            _cantGenerateInfo.text = string.Join("\n", reasons);
 
             // While generating, the button is the Cancel button.
             if (IsGenerating)
                 return;
 
-            _generateButton.SetEnabled(isInstalled);
-            _generateButton.tooltip = isInstalled
-                ? $"Write the notes with {selected.DisplayName} from the commits in the range (by default, since the last tag), " +
-                  "at the detail level set under Options."
-                : $"{selected.DisplayName} isn't installed. Pick another AI under Options, or install it.";
+            _generateButton.SetEnabled(isInstalled && gitProblem == null);
+            _generateButton.tooltip = gitProblem != null ? $"Can't generate: {gitProblem}"
+                : !isInstalled ? $"{selected.DisplayName} isn't installed. Pick another AI under Options, or install it."
+                : $"Write the notes with {selected.DisplayName} from the commits in the range (by default, since the last tag), " +
+                  "at the detail level set under Options.";
         }
 
         private void OnGenerateClicked()

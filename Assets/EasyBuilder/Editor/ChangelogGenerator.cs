@@ -162,6 +162,38 @@ namespace EasyBuilder
             return Changelog.Normalize(kept.Count > 0 ? string.Join("\n", kept) : answer);
         }
 
+        private const string GitMissing = "Git isn't installed or isn't on the PATH.";
+        private const string NotARepository = "The project isn't in a git repository, so there are no commits to read.";
+        // Long enough that a git that hangs doesn't freeze the editor on every refresh; installing git shows up within it.
+        private const double GitCheckSeconds = 30;
+
+        private static string _gitProblem;
+        private static double _gitCheckedAt = double.NegativeInfinity;
+
+        /// <summary>
+        /// Why commits can't be read (git missing, or the project isn't a repository), or null when they can. Cached for
+        /// <see cref="GitCheckSeconds"/>, since the window asks on every refresh and starting git each time would be slow.
+        /// </summary>
+        public static string GetGitProblem()
+        {
+            var now = UnityEditor.EditorApplication.timeSinceStartup;
+
+            if (now - _gitCheckedAt < GitCheckSeconds)
+                return _gitProblem;
+
+            try
+            {
+                _gitProblem = RunGit("rev-parse --is-inside-work-tree", out _) == 0 ? null : NotARepository;
+            }
+            catch (InvalidOperationException e)
+            {
+                _gitProblem = e.Message; // Missing, or it didn't answer in time.
+            }
+
+            _gitCheckedAt = now;
+            return _gitProblem;
+        }
+
         // No whitespace or quotes (they'd break the git arguments), and no leading '-' (it'd be read as an option).
         private static readonly Regex RevisionPattern = new(@"^[^\s""'\\-][^\s""'\\]*$");
 
@@ -175,7 +207,7 @@ namespace EasyBuilder
         public static string GetCommits(string from, string to, out string range)
         {
             if (RunGit("rev-parse --is-inside-work-tree", out _) != 0)
-                throw new InvalidOperationException("The project isn't in a git repository, so there are no commits to read.");
+                throw new InvalidOperationException(NotARepository);
 
             from = from?.Trim();
             to = to?.Trim();
@@ -283,7 +315,7 @@ namespace EasyBuilder
             }
             catch (Win32Exception)
             {
-                throw new InvalidOperationException("Git isn't installed or isn't on the PATH.");
+                throw new InvalidOperationException(GitMissing);
             }
         }
     }
