@@ -52,7 +52,7 @@ Files installed through the Package Manager are read-only, including the sample 
 ---
 
 ## **How to Open**
-**Tools → Easy Builder**
+**Tools → DevDude → Easy Builder**
 
 ---
 

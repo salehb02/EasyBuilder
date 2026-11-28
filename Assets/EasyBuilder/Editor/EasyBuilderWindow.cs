@@ -45,7 +45,7 @@ namespace EasyBuilder
 
         private const string GenerateChangelogText = "Generate";
 
-        [MenuItem("Tools/Easy Builder")]
+        [MenuItem("Tools/DevDude/Easy Builder")]
         public static void OpenBuilder()
         {
             var window = GetWindow<EasyBuilderWindow>();
